@@ -1,0 +1,74 @@
+cmake_minimum_required(VERSION 3.21)
+project(imgui VERSION 1.91.6 LANGUAGES CXX)
+
+find_package(glfw3 REQUIRED)
+find_package(Vulkan REQUIRED)
+
+add_library(imgui STATIC
+  imgui.cpp
+  imgui_demo.cpp
+  imgui_draw.cpp
+  imgui_tables.cpp
+  imgui_widgets.cpp
+  backends/imgui_impl_glfw.cpp
+  backends/imgui_impl_vulkan.cpp
+)
+
+set(CMAKE_DEBUG_POSTFIX "d")
+
+target_include_directories(imgui
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/backends>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(imgui PUBLIC glfw Vulkan::Vulkan)
+
+# Install library
+include(GNUInstallDirs)
+install(TARGETS imgui EXPORT imguiTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
+# Install headers flat (matching #include <imgui.h> / <imgui_impl_glfw.h> usage)
+install(FILES
+  imgui.h imconfig.h imgui_internal.h
+  imstb_rectpack.h imstb_textedit.h imstb_truetype.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(FILES
+  backends/imgui_impl_glfw.h
+  backends/imgui_impl_vulkan.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+# Export targets
+install(EXPORT imguiTargets
+  FILE imguiTargets.cmake
+  NAMESPACE imgui::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/imgui
+)
+
+# Generate config files for find_package(imgui CONFIG)
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/imguiConfigVersion.cmake"
+  VERSION ${PROJECT_VERSION}
+  COMPATIBILITY SameMajorVersion
+)
+
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/imguiConfig.cmake"
+[=[
+include(CMakeFindDependencyMacro)
+find_dependency(glfw3)
+find_dependency(Vulkan)
+include("${CMAKE_CURRENT_LIST_DIR}/imguiTargets.cmake")
+]=])
+
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/imguiConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/imguiConfigVersion.cmake"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/imgui
+)

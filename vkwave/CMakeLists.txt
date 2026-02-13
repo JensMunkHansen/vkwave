@@ -1,84 +1,26 @@
 set(TARGET_NAME vkwave)
 
-# --- Resolve dependencies (prefer system, fall back to FetchContent) ---
+# --- Resolve dependency targets ---
 
 # spdlog
 if(TARGET spdlog::spdlog)
   set(SPDLOG_TARGET spdlog::spdlog)
-  message(STATUS "spdlog: using system package")
 elseif(TARGET spdlog)
   set(SPDLOG_TARGET spdlog)
-  message(STATUS "spdlog: using system package (spdlog)")
-else()
-  message(STATUS "spdlog: using FetchContent")
-  FetchContent_MakeAvailable(spdlog)
-  set(SPDLOG_TARGET spdlog::spdlog)
 endif()
+message(STATUS "spdlog: using ${SPDLOG_TARGET}")
 
 # glfw
 if(TARGET glfw)
   set(GLFW_TARGET glfw)
-  message(STATUS "glfw: using system package")
 elseif(TARGET glfw3::glfw3)
   set(GLFW_TARGET glfw3::glfw3)
-  message(STATUS "glfw: using system package (glfw3::glfw3)")
-else()
-  message(STATUS "glfw: using FetchContent")
-  FetchContent_MakeAvailable(glfw)
-  set(GLFW_TARGET glfw)
 endif()
+message(STATUS "glfw: using ${GLFW_TARGET}")
 
-# imgui
-if(NOT imgui_FOUND)
-  message(STATUS "imgui: using FetchContent")
-  FetchContent_MakeAvailable(imgui)
-  set(_IMGUI_FROM_FETCH ON)
-else()
-  message(STATUS "imgui: using system package")
-  set(_IMGUI_FROM_FETCH OFF)
-endif()
-
-# cgltf (header-only glTF parser)
-if(NOT cgltf_FOUND)
-  message(STATUS "cgltf: using FetchContent")
-  FetchContent_MakeAvailable(cgltf)
-  set(CGLTF_INCLUDE_DIR "${cgltf_SOURCE_DIR}")
-else()
-  message(STATUS "cgltf: using system package")
-endif()
-
-# stb (stb_image for texture loading)
-if(NOT stb_FOUND)
-  message(STATUS "stb: using FetchContent")
-  FetchContent_MakeAvailable(stb)
-  set(STB_INCLUDE_DIR "${stb_SOURCE_DIR}")
-else()
-  message(STATUS "stb: using system package")
-endif()
-
-# --- Build ImGui backend library ---
-if(_IMGUI_FROM_FETCH)
-  add_library(imgui_impl STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
-  )
-  target_include_directories(imgui_impl PUBLIC
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
-  )
-  target_link_libraries(imgui_impl PUBLIC
-    ${GLFW_TARGET}
-    Vulkan::Vulkan
-  )
-else()
-  add_library(imgui_impl INTERFACE)
-  target_link_libraries(imgui_impl INTERFACE imgui::imgui)
-endif()
+# imgui (pre-built with GLFW/Vulkan backends)
+add_library(imgui_impl INTERFACE)
+target_link_libraries(imgui_impl INTERFACE imgui::imgui)
 
 # --- Generate config.h from template ---
 configure_file(
@@ -154,5 +96,5 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   sps_link_optimization(${TARGET_NAME})
 endif()
 
-# Export imgui_impl target for consumers
+# Export GLFW target for app
 set(GLFW_TARGET ${GLFW_TARGET} PARENT_SCOPE)

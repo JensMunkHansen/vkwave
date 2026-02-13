@@ -164,8 +164,8 @@ Toggle via ImGui. Dead branches are skipped by GPU predication — zero cost. Fo
 ## Build
 
 ```bash
-cmake --preset linux-clang
-cmake --build build/linux-clang --config Debug
+cmake --preset linux-gcc
+cmake --build build/linux-gcc --config Debug
 ```
 
 ## Project Structure

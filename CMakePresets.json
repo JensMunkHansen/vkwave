@@ -41,6 +41,7 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++",
+                "CMAKE_PREFIX_PATH": "$env{HOME}/vkwavepkg/linux/gcc/install",
                 "BUILD_TESTING": "ON"
             }
         }
@@ -48,22 +49,22 @@
     "buildPresets": [
         {
             "name": "Debug",
-            "configurePreset": "linux-clang",
+            "configurePreset": "linux-gcc",
             "configuration": "Debug"
         },
         {
             "name": "Release",
-            "configurePreset": "linux-clang",
+            "configurePreset": "linux-gcc",
             "configuration": "Release"
         },
         {
-            "name": "Debug-gcc",
-            "configurePreset": "linux-gcc",
+            "name": "Debug-clang",
+            "configurePreset": "linux-clang",
             "configuration": "Debug"
         },
         {
-            "name": "Release-gcc",
-            "configurePreset": "linux-gcc",
+            "name": "Release-clang",
+            "configurePreset": "linux-clang",
             "configuration": "Release"
         }
     ]

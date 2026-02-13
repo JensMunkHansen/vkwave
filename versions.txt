@@ -1,0 +1,9 @@
+# Dependency Versions for vkwave
+# Format: KEY=VALUE (one per line)
+# Lines starting with # are comments and will be ignored
+
+CATCH2_VERSION=3.5.2
+SPDLOG_VERSION=1.15.1
+GLFW_VERSION=3.4
+IMGUI_VERSION=1.91.6
+CGLTF_VERSION=1.14

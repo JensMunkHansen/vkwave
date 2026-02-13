@@ -18,9 +18,6 @@ endforeach()
 
 include(CMakeDependentOption)
 
-# Download dependencies through CMake
-include(dependencies.cmake)
-
 project(vkwave
   VERSION 0.1
   DESCRIPTION "Async GPU rendering engine"
@@ -29,6 +26,9 @@ project(vkwave
 # Set up build directories (GNUInstallDirs layout, RPATH, multi-config output dirs)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake")
 include(spsInstallDirs)
+
+# Find dependencies (installed by build_dependencies.sh or system packages)
+include(dependencies.cmake)
 
 # Create interface target for compiler/platform flags and include them
 add_library(build INTERFACE)
@@ -52,5 +52,12 @@ endif()
 
 find_package(Vulkan REQUIRED)
 
+option(BUILD_TESTING "Build tests" ON)
+include(spsTesting)
+
 add_subdirectory(vkwave)
 add_subdirectory(app)
+
+if(BUILD_TESTING)
+  add_subdirectory(vkwave/test)
+endif()
