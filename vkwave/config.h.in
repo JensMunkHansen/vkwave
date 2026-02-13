@@ -1,0 +1,10 @@
+#pragma once
+
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
+
+// Note: VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 is defined via CMakeLists.txt
+// to ensure it's defined before any vulkan.hpp includes in all translation units
+
+#define SHADER_DIR "@CMAKE_CURRENT_BINARY_DIR@/shaders/"
+
+#cmakedefine VKWAVE_DEBUG
