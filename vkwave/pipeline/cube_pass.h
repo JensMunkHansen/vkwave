@@ -21,14 +21,16 @@ struct CubePass : Pass<CubePass>
   ExecutionGroup* group{ nullptr };
   const Mesh* mesh{ nullptr };
 
+  // Per-frame state (set by app before render_frame)
+  glm::mat4 view_projection{ 1.0f };
+  float time{ 0.0f };
+  int debug_mode{ 0 };
+
   /// Returns the PipelineSpec for this pass (shader paths, vertex layout, etc.).
-  /// Knows about the Vertex type — eventually a loader would provide this.
   static PipelineSpec pipeline_spec();
 
   /// Record a full frame: update UBO, set push constants, draw mesh.
-  /// Called inside the record callback with an active render pass.
-  void record_frame(vk::CommandBuffer cmd,
-    const glm::mat4& viewProj, float time, int debug_mode) const;
+  void record(vk::CommandBuffer cmd) const;
 };
 
 static_assert(std::is_trivially_destructible_v<CubePass>,

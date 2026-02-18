@@ -24,13 +24,11 @@ PipelineSpec CubePass::pipeline_spec()
   return spec;
 }
 
-void CubePass::record_frame(
-  vk::CommandBuffer cmd,
-  const glm::mat4& viewProj, float time, int debug_mode) const
+void CubePass::record(vk::CommandBuffer cmd) const
 {
   // Update camera UBO for this slot (group tracks current slot)
   CameraUBO ubo_data{};
-  ubo_data.viewProj = viewProj;
+  ubo_data.viewProj = view_projection;
   group->ubo(0, 0).update(&ubo_data, sizeof(ubo_data));
 
   // Push constants

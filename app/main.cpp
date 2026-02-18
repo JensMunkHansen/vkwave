@@ -103,27 +103,9 @@ struct AppState
     camera.set_aspect_ratio(
       static_cast<float>(swapchain.extent().width) / static_cast<float>(swapchain.extent().height));
 
-    // Add group — compiles shaders, creates pipeline/renderpass/layouts,
-    // and auto-creates ring-buffered UBOs from reflection
-    auto& group = graph.add_group("cube",
-      vkwave::CubePass::pipeline_spec(), swapchain.image_format(), kDebug);
-
-    // Configure pass — just two pointer assignments
-    cube_pass.group = &group;
+    // Register pass — creates group, wires pass, sets record callback
+    graph.add_pass("cube", cube_pass, swapchain.image_format(), kDebug);
     cube_pass.mesh = cube_mesh.get();
-
-    // Record callback — app logic only (camera update), pass handles the rest
-    group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
-      auto& grp = graph.group(0);
-
-      camera.azimuth(0.5f);
-      camera.set_aspect_ratio(
-        static_cast<float>(grp.extent().width) / static_cast<float>(grp.extent().height));
-
-      cube_pass.record_frame(cmd,
-        camera.view_projection_matrix(),
-        static_cast<float>(graph.cpu_frame()) * 0.02f, 0);
-    });
 
     graph.build(swapchain);
 
@@ -261,34 +243,19 @@ int main(int argc, char** argv)
       continue;
     }
 
-    // 1. Acquire swapchain image
-    vkwave::RenderGraph::FrameInfo frame_info{};
-    try
-    {
-      frame_info = app.graph.begin_frame(app.swapchain);
-    }
-    catch (vk::OutOfDateKHRError&)
+    // Update per-frame pass state
+    app.camera.azimuth(0.5f);
+    app.camera.set_aspect_ratio(
+      static_cast<float>(app.graph.group(0).extent().width) /
+      static_cast<float>(app.graph.group(0).extent().height));
+    app.cube_pass.view_projection = app.camera.view_projection_matrix();
+    app.cube_pass.time = static_cast<float>(app.graph.cpu_frame()) * 0.02f;
+
+    // Acquire, record, submit, present
+    if (!app.graph.render_frame(app.swapchain))
     {
       app.window.set_resize_pending(app.window.width(), app.window.height());
       continue;
-    }
-
-    // 2. Wait, record, submit via the execution group
-    auto& group = app.graph.group(0);
-    group.begin_frame(frame_info.image_index);
-    group.submit(frame_info.image_index,
-      app.graph.acquire_semaphore(frame_info.sem_index),
-      app.device.graphics_queue());
-
-    // 3. Present
-    try
-    {
-      app.graph.end_frame(app.swapchain, frame_info.image_index,
-        app.device.graphics_queue(), app.device.present_queue());
-    }
-    catch (vk::OutOfDateKHRError&)
-    {
-      app.window.set_resize_pending(app.window.width(), app.window.height());
     }
   }
 

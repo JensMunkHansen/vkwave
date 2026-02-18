@@ -5,6 +5,7 @@
 
 #include <vulkan/vulkan.hpp>
 
+#include <concepts>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -15,6 +16,15 @@ namespace vkwave
 
 class Device;
 class Swapchain;
+
+/// Concept for pass types usable with RenderGraph::add_pass().
+template <typename T>
+concept PassInterface = requires(const T ct, T t, vk::CommandBuffer cmd)
+{
+  { T::pipeline_spec() } -> std::same_as<PipelineSpec>;
+  { ct.record(cmd) } -> std::same_as<void>;
+  { t.group } -> std::convertible_to<ExecutionGroup*>;
+};
 
 /// Top-level frame orchestration.
 ///
@@ -66,8 +76,31 @@ public:
   /// Access acquire semaphore by index (for passing to group submit).
   [[nodiscard]] vk::Semaphore acquire_semaphore(uint32_t sem_index) const;
 
+  /// Register a pass: creates a group, wires the pass, sets the record callback.
+  template <PassInterface PassType>
+  ExecutionGroup& add_pass(const std::string& name,
+                           PassType& pass,
+                           vk::Format swapchain_format,
+                           bool debug)
+  {
+    auto& grp = add_group(name, PassType::pipeline_spec(),
+                           swapchain_format, debug);
+    pass.group = &grp;
+    grp.set_record_fn([&pass](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
+      pass.record(cmd);
+    });
+    return grp;
+  }
+
+  /// Run a complete frame: acquire, submit all groups, present.
+  /// Returns false on swapchain out-of-date (caller should resize).
+  bool render_frame(const Swapchain& swapchain);
+
   /// Access a group by index.
   [[nodiscard]] ExecutionGroup& group(size_t index) { return *m_groups[index]; }
+
+  /// Number of registered groups.
+  [[nodiscard]] size_t group_count() const { return m_groups.size(); }
 
   [[nodiscard]] uint64_t cpu_frame() const { return m_cpu_frame; }
 };

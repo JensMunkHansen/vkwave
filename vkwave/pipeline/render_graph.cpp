@@ -130,4 +130,42 @@ vk::Semaphore RenderGraph::acquire_semaphore(uint32_t sem_index) const
   return *m_acquire_semaphores[sem_index]->semaphore();
 }
 
+bool RenderGraph::render_frame(const Swapchain& swapchain)
+{
+  // 1. Acquire swapchain image
+  FrameInfo frame_info{};
+  try
+  {
+    frame_info = begin_frame(swapchain);
+  }
+  catch (vk::OutOfDateKHRError&)
+  {
+    return false;
+  }
+
+  // 2. Submit each group with semaphore chaining:
+  //    acquire_sem → Group 0 → present_sem[0] → Group 1 → present_sem[1] → ...
+  vk::Semaphore wait_sem = acquire_semaphore(frame_info.sem_index);
+  for (auto& group : m_groups)
+  {
+    group->begin_frame(frame_info.image_index);
+    group->submit(frame_info.image_index, wait_sem,
+                  m_device.graphics_queue());
+    wait_sem = *group->present_semaphore(frame_info.image_index);
+  }
+
+  // 3. Present (end_frame uses last group's present semaphore)
+  try
+  {
+    end_frame(swapchain, frame_info.image_index,
+              m_device.graphics_queue(), m_device.present_queue());
+  }
+  catch (vk::OutOfDateKHRError&)
+  {
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace vkwave

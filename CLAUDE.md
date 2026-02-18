@@ -120,6 +120,9 @@ One command buffer per frame prevents GPU overlap across frames. Each phase need
 ### Global Shared Mutable State
 Any mutable state shared between passes without frame indexing creates data races when passes from different frames overlap.
 
+### Frame-Count-Based Animation
+Never drive animation speed from `cpu_frame()` or any frame counter. Frame rate varies with window size, GPU load, and present mode, so animations tied to frame count run at unpredictable speeds. Always use wall-clock elapsed time (`std::chrono::steady_clock`).
+
 ## Debug Visualization
 
 No extra passes or pipelines for debugging. A single `int debugMode` push constant in the fragment shader switches output:
