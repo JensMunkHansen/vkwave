@@ -134,6 +134,26 @@ if(BUILD_CGLTF)
   )
 endif()
 
+# --- toml11 (header-only) ---
+option(BUILD_TOML11 "Build and deploy toml11" ON)
+sps_get_version(TOML11_VERSION "4.4.0")
+
+if(BUILD_TOML11)
+  message(STATUS "toml11 v${TOML11_VERSION} will be built")
+  ExternalProject_Add(toml11
+    GIT_REPOSITORY https://github.com/ToruNiina/toml11.git
+    GIT_TAG        v${TOML11_VERSION}
+    GIT_SHALLOW    TRUE
+    CMAKE_ARGS
+      -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
+      -Dtoml11_BUILD_TEST=OFF
+      -Dtoml11_BUILD_EXAMPLES=OFF
+    LOG_BUILD     ${EP_LOG_LEVEL}
+    LOG_CONFIGURE ${EP_LOG_LEVEL}
+    LOG_INSTALL   ${EP_LOG_LEVEL}
+  )
+endif()
+
 # --- stb (header-only) ---
 option(BUILD_STB "Deploy stb headers" ON)
 

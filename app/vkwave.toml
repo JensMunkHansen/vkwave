@@ -1,0 +1,15 @@
+title = "vkwave"
+
+[vulkan]
+preferred_gpu = "NVIDIA"    # partial name match, "" for auto-select
+present_mode = "mailbox"    # "immediate", "mailbox", "fifo", "fifo_relaxed"
+swapchain_images = 10       # 0 = driver default (minImageCount + 1)
+
+[window]
+title = "vkwave"
+width = 800
+height = 600
+mode = "windowed"           # "windowed", "windowed_fullscreen", "fullscreen"
+
+[platform]
+use_x11 = false             # force X11 instead of Wayland

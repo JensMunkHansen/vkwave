@@ -190,6 +190,10 @@ bool is_device_suitable(const DeviceInfo& info, const vk::PhysicalDeviceFeatures
       return false;
     }
   }
+  if (!info.presentation_supported && print_info)
+    spdlog::info("Physical device {} does not support presentation!", info.name);
+  if (!info.swapchain_supported && print_info)
+    spdlog::info("Physical device {} does not support swapchain!", info.name);
   return info.presentation_supported && info.swapchain_supported;
 }
 
@@ -262,21 +266,29 @@ vk::PhysicalDevice Device::pick_best_physical_device( //
 {
   std::vector<vk::PhysicalDevice> availableDevices = inst.instance().enumeratePhysicalDevices();
 
-  // If a preferred GPU is specified, select it before querying surface info
-  // (surface queries can hang on some drivers in hybrid GPU setups)
+  // If a preferred GPU is specified, check it first — validate via the
+  // normal suitability path before committing.  Fall through on failure.
   if (!preferred_gpu.empty())
   {
+    bool found = false;
     for (const auto& device : availableDevices)
     {
-      auto props = device.getProperties();
-      std::string name(props.deviceName.data());
+      std::string name(device.getProperties().deviceName.data());
       if (name.find(preferred_gpu) != std::string::npos)
       {
-        spdlog::info("Preferred GPU '{}' found: selecting '{}'", preferred_gpu, name);
-        return device;
+        found = true;
+        auto info = build_device_info(device, surface);
+        if (is_device_suitable(info, required_features, required_extensions, true))
+        {
+          spdlog::info("Preferred GPU '{}' found and suitable: '{}'", preferred_gpu, name);
+          return device;
+        }
+        spdlog::warn("Preferred GPU '{}' found but not suitable, using default selection", name);
+        break;
       }
     }
-    spdlog::warn("Preferred GPU '{}' not found, using default selection", preferred_gpu);
+    if (!found)
+      spdlog::warn("Preferred GPU '{}' not found, using default selection", preferred_gpu);
   }
 
   std::vector<DeviceInfo> infos(availableDevices.size());
@@ -500,13 +512,18 @@ Device::Device(const Instance& inst, vk::SurfaceKHR surface, bool prefer_distinc
     extensions_to_enable.size(), extensions_to_enable.data(),                     //
     &m_enabled_features);
 
-  // Always chain extended dynamic state features
+  // Timeline semaphore feature (Vulkan 1.2 core — no extension needed)
+  vk::PhysicalDeviceTimelineSemaphoreFeatures timelineSemFeatures{};
+  timelineSemFeatures.timelineSemaphore = VK_TRUE;
+
+  // Chain: deviceInfo → extendedDynamicState → timelineSem → (optional RT chain)
   deviceInfo.pNext = &extendedDynamicStateFeatures;
+  extendedDynamicStateFeatures.pNext = &timelineSemFeatures;
 
   // Chain ray tracing features if enabled
   if (enable_ray_tracing && m_ray_tracing_capabilities.supported)
   {
-    extendedDynamicStateFeatures.pNext = &rtPipelineFeatures;
+    timelineSemFeatures.pNext = &rtPipelineFeatures;
   }
 
   try

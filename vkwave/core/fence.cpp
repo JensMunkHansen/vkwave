@@ -16,7 +16,8 @@ Fence::Fence(const Device& device, const std::string& name, const bool in_signal
   assert(device.device());
 
   vk::FenceCreateInfo fenceInfo = {};
-  fenceInfo.flags = vk::FenceCreateFlags() | vk::FenceCreateFlagBits::eSignaled;
+  if (in_signaled_state)
+    fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
 
   m_device.create_fence(fenceInfo, &m_fence, m_name);
 }

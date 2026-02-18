@@ -53,6 +53,17 @@ if(VKWAVE_USE_SYSTEM_CGLTF)
   endif()
 endif()
 
+# --- toml11 ---
+option(VKWAVE_USE_SYSTEM_TOML11 "Use system-installed toml11" ON)
+if(VKWAVE_USE_SYSTEM_TOML11)
+  find_package(toml11 CONFIG QUIET)
+  if(toml11_FOUND)
+    message(STATUS "toml11: found system package")
+  else()
+    message(FATAL_ERROR "toml11 not found. Run ./build_dependencies.sh first.")
+  endif()
+endif()
+
 # --- stb (header-only) ---
 if(VKWAVE_USE_SYSTEM_STB)
   find_path(STB_INCLUDE_DIR stb_image.h PATH_SUFFIXES stb)

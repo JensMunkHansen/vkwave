@@ -114,6 +114,11 @@ void Window::set_resize_callback(GLFWframebuffersizefun callback)
   spdlog::warn("Resize callback registered");
 }
 
+void Window::set_title(const std::string& title)
+{
+  glfwSetWindowTitle(m_window, title.c_str());
+}
+
 void Window::get_framebuffer_size(std::uint32_t& width, std::uint32_t& height) const
 {
   int w, h;

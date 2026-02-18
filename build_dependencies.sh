@@ -148,7 +148,8 @@ check_existing_dependencies() {
             "GLFW:lib/cmake/glfw3/glfw3Config.cmake" \
             "imgui:lib/cmake/imgui/imguiConfig.cmake" \
             "cgltf:include/cgltf.h" \
-            "stb:include/stb/stb_image.h"; do
+            "stb:include/stb/stb_image.h" \
+            "toml11:share/cmake/toml11/toml11Config.cmake"; do
 
             local name="${dep_name%%:*}"
             local path="${dep_name##*:}"
@@ -186,6 +187,7 @@ build_for_type() {
         "-DBUILD_IMGUI=ON"
         "-DBUILD_CGLTF=ON"
         "-DBUILD_STB=ON"
+        "-DBUILD_TOML11=ON"
     )
 
     if [[ "$COMPILER" == "gcc" ]]; then
@@ -235,7 +237,8 @@ verify_installation() {
         "GLFW:lib/cmake/glfw3/glfw3Config.cmake" \
         "imgui:lib/cmake/imgui/imguiConfig.cmake" \
         "cgltf:include/cgltf.h" \
-        "stb:include/stb/stb_image.h"; do
+        "stb:include/stb/stb_image.h" \
+        "toml11:share/cmake/toml11/toml11Config.cmake"; do
 
         local name="${dep_name%%:*}"
         local path="${dep_name##*:}"
@@ -278,7 +281,7 @@ show_summary() {
     echo -e "  Install Directory: ${CYAN}$INSTALL_DIR${NC}"
     echo ""
     echo -e "${WHITE}Installed Dependencies:${NC}"
-    echo -e "  Catch2, spdlog, GLFW, Dear ImGui, cgltf, stb"
+    echo -e "  Catch2, spdlog, GLFW, Dear ImGui, cgltf, stb, toml11"
     echo ""
     echo -e "${WHITE}Files installed in:${NC}"
     echo -e "  ${CYAN}$INSTALL_DIR/lib${NC}       - Libraries"

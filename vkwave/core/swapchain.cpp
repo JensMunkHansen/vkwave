@@ -246,7 +246,7 @@ void Swapchain::setup_swapchain(
   }
 
   static const std::vector<vk::PresentModeKHR> default_present_mode_priorities{
-    vk::PresentModeKHR::eMailbox, vk::PresentModeKHR::eImmediate,
+    vk::PresentModeKHR::eImmediate, vk::PresentModeKHR::eMailbox,
     vk::PresentModeKHR::eFifoRelaxed, vk::PresentModeKHR::eFifo
   };
 
@@ -267,9 +267,13 @@ void Swapchain::setup_swapchain(
 
   vk::SwapchainKHR old_swapchain = m_swapchain;
 
-  uint32_t imageCount = (caps.maxImageCount != 0)
-    ? std::min(caps.minImageCount + 1, caps.maxImageCount)
+  uint32_t imageCount = (m_preferred_image_count > 0)
+    ? std::max(m_preferred_image_count, caps.minImageCount)
     : std::max(caps.minImageCount + 1, caps.minImageCount);
+  if (caps.maxImageCount != 0)
+    imageCount = std::min(imageCount, caps.maxImageCount);
+  spdlog::info("Swapchain image count: {} (min={}, max={}, requested={})",
+    imageCount, caps.minImageCount, caps.maxImageCount, m_preferred_image_count);
 
   // Choose the actual extent (may differ from requested due to surface constraints)
   const vk::Extent2D chosen_extent = choose_image_extent(
@@ -317,9 +321,29 @@ void Swapchain::setup_swapchain(
   createInfo.clipped = VK_TRUE;
 
   // Present modes
-  createInfo.presentMode =
-    choose_present_mode(m_device.physicalDevice().getSurfacePresentModesKHR(m_surface),
-      default_present_mode_priorities, vsync_enabled);
+  if (m_preferred_present_mode.has_value())
+  {
+    auto available = m_device.physicalDevice().getSurfacePresentModesKHR(m_surface);
+    auto it = std::find(available.begin(), available.end(), *m_preferred_present_mode);
+    if (it != available.end())
+    {
+      createInfo.presentMode = *m_preferred_present_mode;
+      spdlog::info("Using preferred present mode: {}", vk::to_string(createInfo.presentMode));
+    }
+    else
+    {
+      createInfo.presentMode =
+        choose_present_mode(available, default_present_mode_priorities, vsync_enabled);
+      spdlog::warn("Preferred present mode {} not available, falling back to {}",
+        vk::to_string(*m_preferred_present_mode), vk::to_string(createInfo.presentMode));
+    }
+  }
+  else
+  {
+    createInfo.presentMode =
+      choose_present_mode(m_device.physicalDevice().getSurfacePresentModesKHR(m_surface),
+        default_present_mode_priorities, vsync_enabled);
+  }
 
   createInfo.oldSwapchain = old_swapchain;
 

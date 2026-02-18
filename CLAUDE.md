@@ -34,13 +34,15 @@ All Vulkan resources are wrapped in RAII classes with non-trivial destructors (l
 template <typename Derived>
 struct Pass
 {
-  ~Pass()
+  Pass()
   {
     static_assert(std::is_trivially_destructible_v<Derived>,
       "Passes must not own Vulkan resources — store them in the graph's resource struct");
   }
 };
 ```
+
+**Why the static_assert is in the constructor, not the destructor:** A user-provided destructor (`~Pass()`) would make `Pass<Derived>` non-trivially-destructible, which propagates to all derived classes — making the check always fail regardless of what members they have. A user-provided *constructor* does NOT affect trivial destructibility, so the check works correctly. Every pass that inherits from `Pass<Derived>` gets the check automatically when constructed.
 
 This works because:
 - Raw `vk::Pipeline`, `vk::Image` handles are trivially destructible (just uint64 wrappers) — OK to hold as cached copies
@@ -160,6 +162,25 @@ Toggle via ImGui. Dead branches are skipped by GPU predication — zero cost. Fo
 18. **Back-face culling.** Dynamic cull mode via `VK_EXT_extended_dynamic_state`.
 19. **Multiple models / scene composition.** Add objects at runtime, separate VBO/IBO per object, TLAS rebuild.
 20. **Screenshot / capture system.**
+
+## Troubleshooting
+
+### NVIDIA GPU reports no presentation support (PRIME/Optimus laptops)
+
+If the NVIDIA GPU doesn't appear in `vulkaninfo` or claims no presentation support after a reboot, the `nvidia_drm` kernel module likely didn't load. Verify with `lsmod | grep nvidia_drm`. If missing:
+
+```bash
+sudo modprobe nvidia_drm modeset=1
+```
+
+Confirm fix: `ls /dev/dri/` should show a second card/renderD node. To make persistent:
+
+```bash
+echo 'options nvidia_drm modeset=1' | sudo tee /etc/modprobe.d/nvidia-drm.conf
+sudo update-initramfs -u
+```
+
+**Root cause:** On hybrid Intel+NVIDIA systems, `nvidia_drm` creates the DRI device nodes needed for Vulkan surface presentation. Without it, only the Intel iGPU is visible to the Vulkan loader. The `nvidia` and `nvidia_uvm` modules alone are not sufficient — `nvidia_drm` (which pulls in `nvidia_modeset`) is required for display output, especially on Wayland.
 
 ## Build
 

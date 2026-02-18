@@ -34,6 +34,8 @@ private:
   //  std::unique_ptr<Semaphore> m_img_available;
   [[nodiscard]] std::vector<vk::Image> get_swapchain_images();
   bool m_vsync_enabled{ true };
+  std::optional<vk::PresentModeKHR> m_preferred_present_mode{};
+  uint32_t m_preferred_image_count{ 0 }; // 0 = driver default
 
   std::optional<vk::CompositeAlphaFlagBitsKHR> choose_composite_alpha(
     const vk::CompositeAlphaFlagBitsKHR request_composite_alpha,
@@ -62,6 +64,9 @@ public:
   }
 
   void set_vsync(bool enabled) { m_vsync_enabled = enabled; }
+
+  void set_preferred_present_mode(vk::PresentModeKHR mode) { m_preferred_present_mode = mode; }
+  void set_preferred_image_count(uint32_t count) { m_preferred_image_count = count; }
 
   Swapchain(Device& device, VkSurfaceKHR surface, std::uint32_t width, std::uint32_t height,
     bool vsync_enabled);

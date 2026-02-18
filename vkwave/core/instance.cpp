@@ -20,7 +20,14 @@ VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
   vk::DebugUtilsMessageTypeFlagsEXT messageType,
   const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
 {
-  spdlog::trace("Validation Layer: {}", pCallbackData->pMessage);
+  using Severity = vk::DebugUtilsMessageSeverityFlagBitsEXT;
+  switch (messageSeverity)
+  {
+  case Severity::eError:   spdlog::error("Validation: {}", pCallbackData->pMessage); break;
+  case Severity::eWarning: spdlog::warn("Validation: {}", pCallbackData->pMessage);  break;
+  case Severity::eInfo:    spdlog::info("Validation: {}", pCallbackData->pMessage);  break;
+  default:                 spdlog::trace("Validation: {}", pCallbackData->pMessage); break;
+  }
   return vk::False;
 }
 

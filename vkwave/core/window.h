@@ -57,6 +57,8 @@ public:
   void set_user_ptr(void* user_ptr);
   void set_resize_callback(GLFWframebuffersizefun callback);
 
+  void set_title(const std::string& title);
+
   static void poll();
 
   bool should_close() const;
