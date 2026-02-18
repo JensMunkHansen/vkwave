@@ -1,6 +1,7 @@
 #include <vkwave/core/mesh.h>
 #include <vkwave/core/device.h>
 
+#include <glm/glm.hpp>
 #include <spdlog/spdlog.h>
 
 namespace vkwave
@@ -17,9 +18,7 @@ Mesh::Mesh(const Device& device, const std::string& name, const std::vector<Vert
   // to copy to DEVICE_LOCAL memory.
   // Include ray tracing usage flags for acceleration structure building
   m_vertex_buffer = std::make_unique<Buffer>(device, name + " vertex buffer", buffer_size,
-    vk::BufferUsageFlagBits::eVertexBuffer |
-    vk::BufferUsageFlagBits::eShaderDeviceAddress |
-    vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+    vk::BufferUsageFlagBits::eVertexBuffer,
     vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 
   // Upload vertex data
@@ -34,23 +33,15 @@ Mesh::Mesh(const Device& device, const std::string& name, const std::vector<Vert
   , m_vertex_count(static_cast<uint32_t>(vertices.size()))
   , m_index_count(static_cast<uint32_t>(indices.size()))
 {
-  // Create vertex buffer with ray tracing usage flags
   vk::DeviceSize vertex_buffer_size = sizeof(Vertex) * vertices.size();
   m_vertex_buffer = std::make_unique<Buffer>(device, name + " vertex buffer", vertex_buffer_size,
-    vk::BufferUsageFlagBits::eVertexBuffer |
-    vk::BufferUsageFlagBits::eStorageBuffer |
-    vk::BufferUsageFlagBits::eShaderDeviceAddress |
-    vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+    vk::BufferUsageFlagBits::eVertexBuffer,
     vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
   m_vertex_buffer->update(vertices.data(), vertex_buffer_size);
 
-  // Create index buffer with ray tracing usage flags
   vk::DeviceSize index_buffer_size = sizeof(uint32_t) * indices.size();
   m_index_buffer = std::make_unique<Buffer>(device, name + " index buffer", index_buffer_size,
-    vk::BufferUsageFlagBits::eIndexBuffer |
-    vk::BufferUsageFlagBits::eStorageBuffer |
-    vk::BufferUsageFlagBits::eShaderDeviceAddress |
-    vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+    vk::BufferUsageFlagBits::eIndexBuffer,
     vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
   m_index_buffer->update(indices.data(), index_buffer_size);
 
@@ -80,6 +71,61 @@ void Mesh::draw(vk::CommandBuffer cmd) const
   {
     cmd.draw(m_vertex_count, 1, 0, 0);
   }
+}
+
+std::unique_ptr<Mesh> Mesh::create_cube(const Device& device)
+{
+  const float s = 0.5f;
+
+  const glm::vec3 red   { 1.0f, 0.2f, 0.2f };
+  const glm::vec3 green { 0.2f, 1.0f, 0.2f };
+  const glm::vec3 blue  { 0.2f, 0.4f, 1.0f };
+  const glm::vec3 yellow{ 1.0f, 1.0f, 0.2f };
+  const glm::vec3 cyan  { 0.2f, 1.0f, 1.0f };
+  const glm::vec3 magenta{ 1.0f, 0.2f, 1.0f };
+
+  std::vector<Vertex> vertices = {
+    // Front face (+Z)
+    { {-s, -s,  s}, { 0,  0,  1}, red },
+    { { s, -s,  s}, { 0,  0,  1}, red },
+    { { s,  s,  s}, { 0,  0,  1}, red },
+    { {-s,  s,  s}, { 0,  0,  1}, red },
+    // Back face (-Z)
+    { { s, -s, -s}, { 0,  0, -1}, green },
+    { {-s, -s, -s}, { 0,  0, -1}, green },
+    { {-s,  s, -s}, { 0,  0, -1}, green },
+    { { s,  s, -s}, { 0,  0, -1}, green },
+    // Right face (+X)
+    { { s, -s,  s}, { 1,  0,  0}, blue },
+    { { s, -s, -s}, { 1,  0,  0}, blue },
+    { { s,  s, -s}, { 1,  0,  0}, blue },
+    { { s,  s,  s}, { 1,  0,  0}, blue },
+    // Left face (-X)
+    { {-s, -s, -s}, {-1,  0,  0}, yellow },
+    { {-s, -s,  s}, {-1,  0,  0}, yellow },
+    { {-s,  s,  s}, {-1,  0,  0}, yellow },
+    { {-s,  s, -s}, {-1,  0,  0}, yellow },
+    // Top face (+Y)
+    { {-s,  s,  s}, { 0,  1,  0}, cyan },
+    { { s,  s,  s}, { 0,  1,  0}, cyan },
+    { { s,  s, -s}, { 0,  1,  0}, cyan },
+    { {-s,  s, -s}, { 0,  1,  0}, cyan },
+    // Bottom face (-Y)
+    { {-s, -s, -s}, { 0, -1,  0}, magenta },
+    { { s, -s, -s}, { 0, -1,  0}, magenta },
+    { { s, -s,  s}, { 0, -1,  0}, magenta },
+    { {-s, -s,  s}, { 0, -1,  0}, magenta },
+  };
+
+  // Two triangles per face, CCW winding viewed from outside
+  std::vector<uint32_t> indices;
+  for (uint32_t face = 0; face < 6; ++face)
+  {
+    uint32_t b = face * 4;
+    indices.insert(indices.end(), { b, b+1, b+2, b, b+2, b+3 });
+  }
+
+  return std::make_unique<Mesh>(device, "cube", vertices, indices);
 }
 
 } // namespace vkwave

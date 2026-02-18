@@ -46,6 +46,13 @@ AppConfig load_config(const std::string& path)
       cfg.use_x11 = toml::find_or(platform, "use_x11", false);
     }
 
+    // [debug]
+    if (data.contains("debug"))
+    {
+      auto& debug = toml::find(data, "debug");
+      cfg.max_frames = toml::find_or<uint64_t>(debug, "max_frames", 0);
+    }
+
     spdlog::info("Loaded config from '{}'", path);
   }
   catch (const std::exception& e)

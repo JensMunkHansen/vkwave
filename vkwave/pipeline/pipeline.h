@@ -8,6 +8,9 @@
 
 namespace vkwave
 {
+
+class ShaderReflection;
+
 /**
         holds the data structures used to create a pipeline
 */
@@ -19,6 +22,14 @@ struct GraphicsPipelineInBundle
   vk::Extent2D swapchainExtent;
   vk::Format swapchainImageFormat;
   vk::DescriptorSetLayout descriptorSetLayout{ VK_NULL_HANDLE }; // Optional
+
+  // Pre-compiled shader modules (when set, skip loading from filepath)
+  vk::ShaderModule vertexModule{ VK_NULL_HANDLE };
+  vk::ShaderModule fragmentModule{ VK_NULL_HANDLE };
+
+  // Reflection-driven layout (when set, push constants and descriptor set
+  // layouts come from reflection instead of manual specification)
+  const ShaderReflection* reflection{ nullptr };
 
   // Vertex input (optional - if empty, no vertex buffers used)
   std::vector<vk::VertexInputBindingDescription> vertexBindings;
@@ -61,6 +72,7 @@ struct GraphicsPipelineOutBundle
   vk::PipelineLayout layout;
   vk::RenderPass renderpass;
   vk::Pipeline pipeline;
+  std::vector<vk::DescriptorSetLayout> descriptorSetLayouts;
 };
 
 vk::PipelineLayout make_pipeline_layout(vk::Device device,
@@ -82,6 +94,27 @@ vk::RenderPass make_composite_renderpass(vk::Device device, vk::Format swapchain
 
 GraphicsPipelineOutBundle create_graphics_pipeline(
   GraphicsPipelineInBundle& specification, bool debug);
+
+/// Pure data describing what pipeline to create.
+///
+/// ExecutionGroup takes this in its constructor, compiles shaders,
+/// reflects layout, and creates the pipeline + renderpass internally.
+/// The app only fills in this struct — no Vulkan handles needed.
+struct PipelineSpec
+{
+  std::string vertex_shader;    // path to .vert GLSL source
+  std::string fragment_shader;  // path to .frag GLSL source
+
+  std::vector<vk::VertexInputBindingDescription> vertex_bindings;
+  std::vector<vk::VertexInputAttributeDescription> vertex_attributes;
+
+  bool backface_culling{ true };
+  bool depth_test{ false };
+  bool depth_write{ true };
+  vk::Format depth_format{ vk::Format::eD32Sfloat };
+  bool blend{ false };
+  vk::SampleCountFlagBits msaa_samples{ vk::SampleCountFlagBits::e1 };
+};
 
 class Pipeline
 {

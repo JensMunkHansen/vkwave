@@ -2,7 +2,7 @@
     "version": 3,
     "cmakeMinimumRequired": {
         "major": 3,
-        "minor": 21,
+        "minor": 24,
         "patch": 0
     },
     "configurePresets": [
@@ -25,7 +25,16 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_PREFIX_PATH": "$env{HOME}/vkwavepkg/linux/clang/install",
                 "BUILD_TESTING": "ON"
+            }
+        },
+        {
+            "name": "linux-clang-coverage",
+            "inherits": "linux-clang",
+            "binaryDir": "build/linux-clang-coverage",
+            "cacheVariables": {
+                "SPS_LLVM_COVERAGE": "ON"
             }
         },
         {
@@ -66,6 +75,11 @@
             "name": "Release-clang",
             "configurePreset": "linux-clang",
             "configuration": "Release"
+        },
+        {
+            "name": "Debug-coverage",
+            "configurePreset": "linux-clang-coverage",
+            "configuration": "Debug"
         }
     ]
 }

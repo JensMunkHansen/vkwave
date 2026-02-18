@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include <glm/glm.hpp>
+
 namespace vkwave
 {
 
@@ -15,6 +17,20 @@ struct TrianglePushConstants
 };
 
 static_assert(sizeof(TrianglePushConstants) <= 128,
+  "Push constants must fit in 128 bytes (guaranteed minimum)");
+
+/// Push constant data for the cube pass.
+/// Must match the layout in cube.vert / cube.frag.
+struct CubePushConstants
+{
+  glm::mat4 model;     // 64 bytes — model transform
+  float time;          // 4 bytes  — animation time
+  int32_t debugMode;   // 4 bytes  — debug visualization mode
+};                     // 72 bytes total
+
+static_assert(sizeof(CubePushConstants) == 72,
+  "CubePushConstants must be 72 bytes to match shader layout");
+static_assert(sizeof(CubePushConstants) <= 128,
   "Push constants must fit in 128 bytes (guaranteed minimum)");
 
 } // namespace vkwave

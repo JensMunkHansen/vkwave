@@ -4,31 +4,145 @@
 #include <vkwave/core/device.h>
 #include <vkwave/core/swapchain.h>
 #include <vkwave/pipeline/framebuffer.h>
+#include <vkwave/pipeline/pipeline.h>
+#include <vkwave/pipeline/shader_compiler.h>
 
 #include <fmt/format.h>
+#include <spdlog/spdlog.h>
 
 #include <cassert>
 
 namespace vkwave
 {
 
+static vk::BufferUsageFlags usage_for_descriptor_type(vk::DescriptorType type)
+{
+  switch (type)
+  {
+  case vk::DescriptorType::eUniformBuffer:
+  case vk::DescriptorType::eUniformBufferDynamic:
+    return vk::BufferUsageFlagBits::eUniformBuffer;
+  case vk::DescriptorType::eStorageBuffer:
+  case vk::DescriptorType::eStorageBufferDynamic:
+    return vk::BufferUsageFlagBits::eStorageBuffer;
+  default:
+    assert(false && "unsupported descriptor type for auto-buffer");
+    return {};
+  }
+}
+
 ExecutionGroup::ExecutionGroup(
   const Device& device, const std::string& name,
-  vk::Pipeline pipeline, vk::PipelineLayout layout,
-  vk::RenderPass renderpass)
+  const PipelineSpec& spec, vk::Format swapchain_format,
+  bool debug)
   : m_device(device)
   , m_name(name)
-  , m_pipeline(pipeline)
-  , m_layout(layout)
-  , m_renderpass(renderpass)
+  , m_debug(debug)
+  , m_depth_enabled(spec.depth_test)
+  , m_depth_format(spec.depth_format)
 {
+  // Compile shaders
+  auto vert = ShaderCompiler::compile(spec.vertex_shader, vk::ShaderStageFlagBits::eVertex);
+  auto frag = ShaderCompiler::compile(spec.fragment_shader, vk::ShaderStageFlagBits::eFragment);
+
+  // Reflect layout
+  ShaderReflection reflection;
+  reflection.add_stage(vert.spirv, vk::ShaderStageFlagBits::eVertex);
+  reflection.add_stage(frag.spirv, vk::ShaderStageFlagBits::eFragment);
+  reflection.finalize();
+
+  // Store reflected descriptor set info for auto-creating UBOs later
+  m_reflected_sets = reflection.descriptor_set_infos();
+
+  // Register buffer specs for each binding with blockSize > 0 (UBO/SSBO)
+  for (auto& set_info : m_reflected_sets)
+  {
+    for (auto& b : set_info.bindings)
+    {
+      if (b.blockSize > 0)
+      {
+        BufferHandle handle = m_buffer_specs.size();
+        m_buffer_specs.push_back({
+          fmt::format("set{}_binding{}", set_info.set, b.binding),
+          b.blockSize,
+          usage_for_descriptor_type(b.type),
+          vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+        });
+        m_binding_to_handle[{ set_info.set, b.binding }] = handle;
+      }
+    }
+  }
+
+  auto d = device.device();
+  auto vert_mod = ShaderCompiler::create_module(d, vert.spirv);
+  auto frag_mod = ShaderCompiler::create_module(d, frag.spirv);
+
+  // Build GraphicsPipelineInBundle from PipelineSpec + reflection
+  GraphicsPipelineInBundle bundle_in{};
+  bundle_in.device = d;
+  bundle_in.swapchainExtent = vk::Extent2D{ 1, 1 }; // viewport/scissor are dynamic state
+  bundle_in.swapchainImageFormat = swapchain_format;
+  bundle_in.backfaceCulling = spec.backface_culling;
+  bundle_in.depthTestEnabled = spec.depth_test;
+  bundle_in.depthWriteEnabled = spec.depth_write;
+  bundle_in.depthFormat = spec.depth_format;
+  bundle_in.blendEnabled = spec.blend;
+  bundle_in.msaaSamples = spec.msaa_samples;
+  bundle_in.vertexModule = vert_mod;
+  bundle_in.fragmentModule = frag_mod;
+  bundle_in.reflection = &reflection;
+  bundle_in.vertexBindings = spec.vertex_bindings;
+  bundle_in.vertexAttributes = spec.vertex_attributes;
+
+  auto bundle_out = create_graphics_pipeline(bundle_in, debug);
+  m_pipeline = bundle_out.pipeline;
+  m_layout = bundle_out.layout;
+  m_renderpass = bundle_out.renderpass;
+  m_descriptor_layouts = std::move(bundle_out.descriptorSetLayouts);
+
+  // Destroy shader modules (no longer needed after pipeline creation)
+  d.destroyShaderModule(vert_mod);
+  d.destroyShaderModule(frag_mod);
+
+  // Timeline semaphore
   m_timeline = std::make_unique<TimelineSemaphore>(
     device, fmt::format("{}_timeline", name), 0);
+
+  // Default clear values
+  m_clear_values.resize(m_depth_enabled ? 2 : 1);
+  m_clear_values[0].color = std::array<float, 4>{ 0.1f, 0.1f, 0.1f, 1.0f };
+  if (m_depth_enabled)
+    m_clear_values[1].depthStencil = vk::ClearDepthStencilValue{ 1.0f, 0 };
+
+  spdlog::debug("ExecutionGroup '{}': pipeline created, {} auto-buffered bindings",
+    name, m_binding_to_handle.size());
+}
+
+ExecutionGroup::~ExecutionGroup()
+{
+  // Frame resources must be destroyed before pipeline state,
+  // because framebuffers reference the renderpass.
+  destroy_frame_resources();
+
+  auto d = m_device.device();
+  if (m_pipeline)
+    d.destroyPipeline(m_pipeline);
+  if (m_layout)
+    d.destroyPipelineLayout(m_layout);
+  if (m_renderpass)
+    d.destroyRenderPass(m_renderpass);
+  for (auto layout : m_descriptor_layouts)
+    d.destroyDescriptorSetLayout(layout);
 }
 
 void ExecutionGroup::set_record_fn(RecordFn fn)
 {
   m_record_fn = std::move(fn);
+}
+
+void ExecutionGroup::set_clear_values(std::vector<vk::ClearValue> values)
+{
+  m_clear_values = std::move(values);
 }
 
 void ExecutionGroup::create_frame_resources(
@@ -37,11 +151,19 @@ void ExecutionGroup::create_frame_resources(
   m_frames = vkwave::create_frame_resources(m_device, count);
   m_extent = swapchain.extent();
 
+  // Create depth buffer if enabled (size-dependent, not ring-buffered)
+  if (m_depth_enabled)
+  {
+    m_depth_buffer = std::make_unique<DepthStencilAttachment>(
+      m_device, m_depth_format, m_extent, vk::SampleCountFlagBits::e1);
+  }
+
   // Create framebuffers
   framebufferInput fb_input{};
   fb_input.device = m_device.device();
   fb_input.renderpass = m_renderpass;
   fb_input.swapchainExtent = swapchain.extent();
+  fb_input.depthImageView = m_depth_buffer ? m_depth_buffer->combined_view() : VK_NULL_HANDLE;
 
   auto framebuffers = make_framebuffers(fb_input, swapchain, false);
   for (uint32_t i = 0; i < count; ++i)
@@ -63,7 +185,7 @@ void ExecutionGroup::create_frame_resources(
   // across resize and its counter is already beyond earlier values.
   m_slot_timeline_values.assign(count, 0);
 
-  // Allocate ring-buffered managed buffers
+  // Allocate ring-buffered managed buffers (specs populated from reflection in constructor)
   m_buffers.resize(m_buffer_specs.size());
   for (size_t h = 0; h < m_buffer_specs.size(); ++h)
   {
@@ -77,11 +199,93 @@ void ExecutionGroup::create_frame_resources(
         spec.size, spec.usage, spec.properties));
     }
   }
+
+  // Create descriptor pool and sets if layouts were provided
+  if (!m_descriptor_layouts.empty())
+  {
+    // Compute pool sizes from reflected sets
+    std::vector<vk::DescriptorPoolSize> pool_sizes;
+    for (auto& set_info : m_reflected_sets)
+    {
+      for (auto& b : set_info.bindings)
+      {
+        if (b.blockSize > 0)
+          pool_sizes.push_back({ b.type, count });
+      }
+    }
+
+    if (!pool_sizes.empty())
+    {
+      vk::DescriptorPoolCreateInfo pool_info{};
+      pool_info.maxSets = count;
+      pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+      pool_info.pPoolSizes = pool_sizes.data();
+
+      m_descriptor_pool = m_device.device().createDescriptorPool(pool_info);
+
+      // Allocate one set per slot (all using the same layout[0])
+      std::vector<vk::DescriptorSetLayout> alloc_layouts(count, m_descriptor_layouts[0]);
+
+      vk::DescriptorSetAllocateInfo alloc_info{};
+      alloc_info.descriptorPool = m_descriptor_pool;
+      alloc_info.descriptorSetCount = count;
+      alloc_info.pSetLayouts = alloc_layouts.data();
+
+      m_descriptor_sets = m_device.device().allocateDescriptorSets(alloc_info);
+
+      // Write descriptor updates: bind each slot's buffer to its set
+      for (uint32_t i = 0; i < count; ++i)
+      {
+        std::vector<vk::WriteDescriptorSet> writes;
+        std::vector<vk::DescriptorBufferInfo> buffer_infos;
+        buffer_infos.reserve(m_binding_to_handle.size());
+
+        for (auto& [key, handle] : m_binding_to_handle)
+        {
+          auto& buf = *m_buffers[handle][i];
+          buffer_infos.push_back({ buf.buffer(), 0, buf.size() });
+
+          // Find the binding info for the descriptor type
+          vk::DescriptorType dtype = vk::DescriptorType::eUniformBuffer;
+          for (auto& set_info : m_reflected_sets)
+          {
+            if (set_info.set != key.first) continue;
+            for (auto& b : set_info.bindings)
+            {
+              if (b.binding == key.second)
+              {
+                dtype = b.type;
+                break;
+              }
+            }
+          }
+
+          vk::WriteDescriptorSet write{};
+          write.dstSet = m_descriptor_sets[i];
+          write.dstBinding = key.second;
+          write.dstArrayElement = 0;
+          write.descriptorCount = 1;
+          write.descriptorType = dtype;
+          write.pBufferInfo = &buffer_infos.back();
+          writes.push_back(write);
+        }
+
+        m_device.device().updateDescriptorSets(writes, {});
+      }
+    }
+  }
 }
 
 void ExecutionGroup::destroy_frame_resources()
 {
+  if (m_descriptor_pool)
+  {
+    m_device.device().destroyDescriptorPool(m_descriptor_pool);
+    m_descriptor_pool = VK_NULL_HANDLE;
+  }
+  m_descriptor_sets.clear();
   m_buffers.clear();
+  m_depth_buffer.reset();
   vkwave::destroy_frame_resources(m_frames, m_device.device());
   m_present_semaphores.clear();
   m_slot_timeline_values.clear();
@@ -103,7 +307,7 @@ void ExecutionGroup::submit(
 {
   auto& frame = m_frames[slot_index];
 
-  // Set current slot so buffer() works inside the record callback
+  // Set current slot so buffer()/descriptor_set() work inside the record callback
   m_current_slot = slot_index;
 
   // Reset command pool and record
@@ -111,7 +315,21 @@ void ExecutionGroup::submit(
 
   vk::CommandBufferBeginInfo begin_info{};
   frame.command_buffer.begin(begin_info);
-  m_record_fn(frame.command_buffer, frame.framebuffer, m_extent);
+
+  // Begin render pass
+  vk::RenderPassBeginInfo rp_info{};
+  rp_info.renderPass = m_renderpass;
+  rp_info.framebuffer = frame.framebuffer;
+  rp_info.renderArea.extent = m_extent;
+  rp_info.clearValueCount = static_cast<uint32_t>(m_clear_values.size());
+  rp_info.pClearValues = m_clear_values.data();
+
+  frame.command_buffer.beginRenderPass(rp_info, vk::SubpassContents::eInline);
+
+  // Record pass commands
+  m_record_fn(frame.command_buffer, slot_index);
+
+  frame.command_buffer.endRenderPass();
   frame.command_buffer.end();
 
   // Assign the next timeline value to this submission
@@ -171,17 +389,6 @@ const vk::Semaphore* ExecutionGroup::present_semaphore(uint32_t slot) const
   return m_present_semaphores[slot]->semaphore();
 }
 
-BufferHandle ExecutionGroup::add_buffer(
-  const std::string& name, vk::DeviceSize size,
-  vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties)
-{
-  assert(m_buffers.empty() && "add_buffer() must be called before create_frame_resources()");
-  assert(size > 0);
-  BufferHandle handle = m_buffer_specs.size();
-  m_buffer_specs.push_back({name, size, usage, properties});
-  return handle;
-}
-
 Buffer& ExecutionGroup::buffer(BufferHandle handle)
 {
   assert(handle < m_buffers.size() && "invalid BufferHandle");
@@ -194,6 +401,34 @@ Buffer& ExecutionGroup::buffer(BufferHandle handle, uint32_t slot)
   assert(handle < m_buffers.size() && "invalid BufferHandle");
   assert(slot < m_buffers[handle].size() && "slot out of range");
   return *m_buffers[handle][slot];
+}
+
+Buffer& ExecutionGroup::ubo(uint32_t set, uint32_t binding)
+{
+  auto it = m_binding_to_handle.find({ set, binding });
+  assert(it != m_binding_to_handle.end() && "no auto-created buffer for this (set, binding)");
+  return buffer(it->second);
+}
+
+Buffer& ExecutionGroup::ubo(uint32_t set, uint32_t binding, uint32_t slot)
+{
+  auto it = m_binding_to_handle.find({ set, binding });
+  assert(it != m_binding_to_handle.end() && "no auto-created buffer for this (set, binding)");
+  return buffer(it->second, slot);
+}
+
+vk::DescriptorSet ExecutionGroup::descriptor_set() const
+{
+  assert(!m_descriptor_sets.empty() && "no descriptor sets allocated");
+  assert(m_current_slot < m_descriptor_sets.size() && "descriptor_set() called before create_frame_resources()");
+  return m_descriptor_sets[m_current_slot];
+}
+
+vk::DescriptorSet ExecutionGroup::descriptor_set(uint32_t slot) const
+{
+  assert(!m_descriptor_sets.empty() && "no descriptor sets allocated");
+  assert(slot < m_descriptor_sets.size() && "slot out of range");
+  return m_descriptor_sets[slot];
 }
 
 } // namespace vkwave

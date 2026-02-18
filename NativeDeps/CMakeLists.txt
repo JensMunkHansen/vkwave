@@ -154,6 +154,28 @@ if(BUILD_TOML11)
   )
 endif()
 
+# --- SPIRV-Reflect ---
+option(BUILD_SPIRV_REFLECT "Build and deploy SPIRV-Reflect" ON)
+sps_get_version(SPIRV_REFLECT_VERSION "vulkan-sdk-1.4.304.1")
+
+if(BUILD_SPIRV_REFLECT)
+  message(STATUS "SPIRV-Reflect v${SPIRV_REFLECT_VERSION} will be built")
+  ExternalProject_Add(spirv-reflect
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Reflect.git
+    GIT_TAG        ${SPIRV_REFLECT_VERSION}
+    GIT_SHALLOW    TRUE
+    PATCH_COMMAND  ${CMAKE_COMMAND} -E copy
+      ${CMAKE_CURRENT_SOURCE_DIR}/spirv_reflect_CMakeLists.txt
+      <SOURCE_DIR>/CMakeLists.txt
+    CMAKE_ARGS
+      -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
+      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+    LOG_BUILD     ${EP_LOG_LEVEL}
+    LOG_CONFIGURE ${EP_LOG_LEVEL}
+    LOG_INSTALL   ${EP_LOG_LEVEL}
+  )
+endif()
+
 # --- stb (header-only) ---
 option(BUILD_STB "Deploy stb headers" ON)
 

@@ -16,11 +16,12 @@ RenderGraph::RenderGraph(const Device& device)
 
 ExecutionGroup& RenderGraph::add_group(
   const std::string& name,
-  vk::Pipeline pipeline, vk::PipelineLayout layout,
-  vk::RenderPass renderpass)
+  const PipelineSpec& spec,
+  vk::Format swapchain_format,
+  bool debug)
 {
   m_groups.push_back(std::make_unique<ExecutionGroup>(
-    m_device, name, pipeline, layout, renderpass));
+    m_device, name, spec, swapchain_format, debug));
   return *m_groups.back();
 }
 
@@ -47,8 +48,8 @@ void RenderGraph::build(const Swapchain& swapchain)
 
 RenderGraph::~RenderGraph()
 {
-  for (auto& group : m_groups)
-    group->destroy_frame_resources();
+  // ExecutionGroup destructors handle cleanup (destroy_frame_resources + pipeline state).
+  // Just need to clear groups while device is still valid.
 }
 
 void RenderGraph::drain()

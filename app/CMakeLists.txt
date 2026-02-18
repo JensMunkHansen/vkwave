@@ -14,8 +14,26 @@ target_link_libraries(vkwave_app
     toml11::toml11
 )
 
-# Copy config to each per-config output directory (Ninja Multi-Config)
+# Generate vkwave.toml from template, then copy to each per-config output directory.
+# SPS_LLVM_COVERAGE builds get max_frames=10 so the app exits for automated coverage.
+if(NOT DEFINED VKWAVE_MAX_FRAMES)
+  if(SPS_LLVM_COVERAGE)
+    set(VKWAVE_MAX_FRAMES 10)
+  else()
+    set(VKWAVE_MAX_FRAMES 0)
+  endif()
+endif()
+
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/vkwave.toml.in
+  ${CMAKE_CURRENT_BINARY_DIR}/vkwave.toml
+  @ONLY
+)
+
 foreach(CFG ${CMAKE_CONFIGURATION_TYPES})
-  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/vkwave.toml
-    ${CMAKE_BINARY_DIR}/${CFG}/${CMAKE_INSTALL_BINDIR}/vkwave.toml COPYONLY)
+  configure_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/vkwave.toml
+    ${CMAKE_BINARY_DIR}/${CFG}/${CMAKE_INSTALL_BINDIR}/vkwave.toml
+    COPYONLY
+  )
 endforeach()

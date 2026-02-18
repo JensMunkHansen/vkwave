@@ -23,6 +23,9 @@ struct AppConfig
 
   // [platform]
   bool use_x11{ false };
+
+  // [debug]
+  uint64_t max_frames{ 0 };  // 0 = unlimited, >0 = exit after N frames
 };
 
 AppConfig load_config(const std::string& path);

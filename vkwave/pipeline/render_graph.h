@@ -35,10 +35,12 @@ public:
   explicit RenderGraph(const Device& device);
   ~RenderGraph();
 
-  /// Add an execution group. Returns a reference for setting the record callback.
+  /// Add an execution group from a PipelineSpec.
+  /// The group compiles shaders, creates pipeline/renderpass/layouts internally.
   ExecutionGroup& add_group(const std::string& name,
-                            vk::Pipeline pipeline, vk::PipelineLayout layout,
-                            vk::RenderPass renderpass);
+                            const PipelineSpec& spec,
+                            vk::Format swapchain_format,
+                            bool debug);
 
   /// Allocate per-frame resources for all groups.
   void build(const Swapchain& swapchain);

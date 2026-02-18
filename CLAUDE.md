@@ -1,5 +1,28 @@
 # vkwave - Async GPU Rendering Engine
 
+## IMPORTANT — Check Coverage Before Implementing New Code
+
+Before writing new functionality, **always consult the LLVM coverage report** to see if existing code already provides what you need. The codebase has ~370 uncovered functions across core wrappers, loaders, and pipeline utilities that may already do what you're about to write.
+
+```bash
+# Regenerate the coverage report
+cmake --build build/linux-clang-coverage --target coverage --config Debug
+
+# Browse per-file HTML report
+xdg-open build/linux-clang-coverage/coverage-html/index.html
+```
+
+Key areas with existing unused functionality:
+- **Camera** — full orbit camera with pan, dolly, zoom, yaw, pitch, roll, azimuth, elevation
+- **Loaders** — glTF (with materials), PLY, IBL (BRDF LUT, irradiance, prefiltered cubemaps)
+- **Texture** — image creation, upload, layout transitions, sampler
+- **AccelerationStructure** — BLAS/TLAS build for ray tracing
+- **RayTracingPipeline** — SBT creation, trace dispatch
+- **Representation** — Vulkan enum→string for all common types
+- **Fence** — block, reset, status (superseded by timeline semaphores but still available)
+
+Reuse before reimplementing. If an existing function almost fits, extend it rather than duplicating.
+
 ## REQUIREMENTS - Non-Negotiable Design Principles
 
 ### 1. GPU Pass Overlap Across Frames
@@ -181,6 +204,10 @@ sudo update-initramfs -u
 ```
 
 **Root cause:** On hybrid Intel+NVIDIA systems, `nvidia_drm` creates the DRI device nodes needed for Vulkan surface presentation. Without it, only the Intel iGPU is visible to the Vulkan loader. The `nvidia` and `nvidia_uvm` modules alone are not sufficient — `nvidia_drm` (which pulls in `nvidia_modeset`) is required for display output, especially on Wayland.
+
+### Performance: Switch to NVIDIA-only mode with hwmux
+
+On PRIME/Optimus laptops, switching to NVIDIA-only mode using `hwmux` increases framerate from ~1500 Hz to ~12000 Hz. The hybrid rendering path adds significant overhead; bypassing it gives the GPU direct display access.
 
 ## Build
 

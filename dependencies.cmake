@@ -64,6 +64,14 @@ if(VKWAVE_USE_SYSTEM_TOML11)
   endif()
 endif()
 
+# --- SPIRV-Reflect ---
+find_package(spirv-reflect-static CONFIG QUIET)
+if(spirv-reflect-static_FOUND)
+  message(STATUS "SPIRV-Reflect: found system package")
+else()
+  message(FATAL_ERROR "SPIRV-Reflect not found. Run ./build_dependencies.sh first.")
+endif()
+
 # --- stb (header-only) ---
 if(VKWAVE_USE_SYSTEM_STB)
   find_path(STB_INCLUDE_DIR stb_image.h PATH_SUFFIXES stb)

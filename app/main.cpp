@@ -2,15 +2,15 @@
 
 #include <vkwave/config.h>
 
+#include <vkwave/core/camera.h>
 #include <vkwave/core/device.h>
 #include <vkwave/core/instance.h>
-#include <vkwave/core/push_constants.h>
+#include <vkwave/core/mesh.h>
 #include <vkwave/core/swapchain.h>
 #include <vkwave/core/window.h>
 #include <vkwave/core/windowsurface.h>
-#include <vkwave/pipeline/pipeline.h>
+#include <vkwave/pipeline/cube_pass.h>
 #include <vkwave/pipeline/render_graph.h>
-#include <vkwave/pipeline/triangle_pass.h>
 
 #include <spdlog/spdlog.h>
 
@@ -51,16 +51,17 @@ struct AppState
   vkwave::Device device;
   vkwave::Swapchain swapchain;
 
-  // Pipeline (shared immutable — safe for overlapping frames)
-  vk::PipelineLayout pipeline_layout{ VK_NULL_HANDLE };
-  vk::RenderPass renderpass{ VK_NULL_HANDLE };
-  vk::Pipeline pipeline{ VK_NULL_HANDLE };
-
-  // Render graph (replaces flat per-frame resources + fences)
+  // Render graph (owns execution groups, which own pipelines + depth + frame resources)
   vkwave::RenderGraph graph;
 
-  // Pass (trivially destructible — holds only raw handles)
-  vkwave::TrianglePass triangle_pass{};
+  // Mesh (RAII)
+  std::unique_ptr<vkwave::Mesh> cube_mesh;
+
+  // Camera
+  vkwave::Camera camera;
+
+  // Pass (trivially destructible — holds only raw pointers)
+  vkwave::CubePass cube_pass{};
 
   // Config
   AppConfig config;
@@ -94,39 +95,34 @@ struct AppState
     if (needs_recreate)
       swapchain.recreate(window.width(), window.height());
 
-    create_pipeline();
+    cube_mesh = vkwave::Mesh::create_cube(device);
 
-    triangle_pass.pipeline = pipeline;
-    triangle_pass.layout = pipeline_layout;
-    triangle_pass.renderpass = renderpass;
-    triangle_pass.extent = swapchain.extent();
+    // Set up camera
+    camera.set_position(0.0f, 1.5f, 3.0f);
+    camera.set_focal_point(0.0f, 0.0f, 0.0f);
+    camera.set_aspect_ratio(
+      static_cast<float>(swapchain.extent().width) / static_cast<float>(swapchain.extent().height));
 
-    // Set up render graph with one execution group
-    auto& group = graph.add_group("triangle", pipeline, pipeline_layout, renderpass);
-    group.set_record_fn([this](vk::CommandBuffer cmd, vk::Framebuffer fb, vk::Extent2D) {
-      const float t = static_cast<float>(graph.cpu_frame()) * 0.02f;
-      vkwave::TrianglePushConstants pc{};
-      pc.color[0] = 0.5f + 0.5f * std::sin(t);
-      pc.color[1] = 0.5f + 0.5f * std::sin(t + 2.094f);
-      pc.color[2] = 0.5f + 0.5f * std::sin(t + 4.189f);
-      pc.color[3] = 1.0f;
-      pc.time = t;
-      pc.debugMode = 0;
+    // Add group — compiles shaders, creates pipeline/renderpass/layouts,
+    // and auto-creates ring-buffered UBOs from reflection
+    auto& group = graph.add_group("cube",
+      vkwave::CubePass::pipeline_spec(), swapchain.image_format(), kDebug);
 
-      vk::ClearValue clear_color{
-        std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 1.0f }
-      };
+    // Configure pass — just two pointer assignments
+    cube_pass.group = &group;
+    cube_pass.mesh = cube_mesh.get();
 
-      vk::RenderPassBeginInfo rp_info{};
-      rp_info.renderPass = triangle_pass.renderpass;
-      rp_info.framebuffer = fb;
-      rp_info.renderArea.extent = triangle_pass.extent;
-      rp_info.clearValueCount = 1;
-      rp_info.pClearValues = &clear_color;
+    // Record callback — app logic only (camera update), pass handles the rest
+    group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
+      auto& grp = graph.group(0);
 
-      cmd.beginRenderPass(rp_info, vk::SubpassContents::eInline);
-      triangle_pass.record(cmd, pc);
-      cmd.endRenderPass();
+      camera.azimuth(0.5f);
+      camera.set_aspect_ratio(
+        static_cast<float>(grp.extent().width) / static_cast<float>(grp.extent().height));
+
+      cube_pass.record_frame(cmd,
+        camera.view_projection_matrix(),
+        static_cast<float>(graph.cpu_frame()) * 0.02f, 0);
     });
 
     graph.build(swapchain);
@@ -145,7 +141,6 @@ struct AppState
   ~AppState()
   {
     graph.drain();
-    destroy_pipeline();
   }
 
   // Non-copyable, non-movable
@@ -169,34 +164,6 @@ private:
       instance, surface.get(), false, physical_device, ext_span,
       required_features, {}, false);
   }
-
-  void create_pipeline()
-  {
-    vkwave::GraphicsPipelineInBundle spec{};
-    spec.device = device.device();
-    spec.vertexFilepath = SHADER_DIR "fullscreen.vert.spv";
-    spec.fragmentFilepath = SHADER_DIR "fullscreen.frag.spv";
-    spec.swapchainExtent = swapchain.extent();
-    spec.swapchainImageFormat = swapchain.image_format();
-    spec.backfaceCulling = false;
-    spec.pushConstantRanges = {
-      { vk::ShaderStageFlagBits::eFragment, 0,
-        sizeof(vkwave::TrianglePushConstants) }
-    };
-
-    auto bundle = vkwave::create_graphics_pipeline(spec, kDebug);
-    pipeline_layout = bundle.layout;
-    renderpass = bundle.renderpass;
-    pipeline = bundle.pipeline;
-  }
-
-  void destroy_pipeline()
-  {
-    auto d = device.device();
-    d.destroyPipeline(pipeline);
-    d.destroyPipelineLayout(pipeline_layout);
-    d.destroyRenderPass(renderpass);
-  }
 };
 
 // ---------------------------------------------------------------------------
@@ -218,8 +185,10 @@ static void handle_resize(AppState& app)
 
   app.graph.drain();
   app.swapchain.recreate(w, h);
+
+  // Group internally recreates depth buffer + framebuffers on resize.
+  // Pass queries group->extent(), so no manual update needed.
   app.graph.resize(app.swapchain);
-  app.triangle_pass.extent = app.swapchain.extent();
 
   spdlog::info("Resized to {}x{}", w, h);
 }
@@ -240,12 +209,19 @@ static void signal_handler(int /*sig*/)
 // Main
 // ---------------------------------------------------------------------------
 
-int main(int /*argc*/, char** /*argv*/)
+int main(int argc, char** argv)
 {
   spdlog::set_level(kDebug ? spdlog::level::debug : spdlog::level::info);
   spdlog::info("vkwave -- async GPU rendering engine");
 
   auto config = load_config("vkwave.toml");
+
+  // Command line: --max-frames N overrides config
+  for (int i = 1; i < argc - 1; ++i)
+  {
+    if (std::string_view(argv[i]) == "--max-frames")
+      config.max_frames = std::strtoull(argv[++i], nullptr, 10);
+  }
 
   if (config.use_x11)
     setenv("VKWAVE_USE_X11", "1", 1);
@@ -261,7 +237,8 @@ int main(int /*argc*/, char** /*argv*/)
   auto fps_time = std::chrono::steady_clock::now();
   uint64_t fps_frames = 0;
 
-  while (!app.window.should_close())
+  while (!app.window.should_close() &&
+         (config.max_frames == 0 || app.graph.cpu_frame() < config.max_frames))
   {
     vkwave::Window::poll();
 

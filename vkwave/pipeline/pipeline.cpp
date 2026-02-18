@@ -1,5 +1,6 @@
 #include <vkwave/pipeline/pipeline.h>
 
+#include <vkwave/pipeline/shader_reflection.h>
 #include <vkwave/pipeline/shaders.h>
 
 #include <iostream>
@@ -345,12 +346,19 @@ GraphicsPipelineOutBundle create_graphics_pipeline(
   pipelineInfo.pInputAssemblyState = &inputAssemblyInfo;
 
   // Vertex Shader
-  if (debug)
+  bool ownsVertexShader = false;
+  vk::ShaderModule vertexShader;
+  if (specification.vertexModule)
   {
-    std::cout << "Create vertex shader module" << std::endl;
+    vertexShader = specification.vertexModule;
   }
-  vk::ShaderModule vertexShader =
-    vkwave::createModule(specification.vertexFilepath, specification.device, debug);
+  else
+  {
+    if (debug)
+      std::cout << "Create vertex shader module" << std::endl;
+    vertexShader = vkwave::createModule(specification.vertexFilepath, specification.device, debug);
+    ownsVertexShader = true;
+  }
   vk::PipelineShaderStageCreateInfo vertexShaderInfo = {};
   vertexShaderInfo.flags = vk::PipelineShaderStageCreateFlags();
   vertexShaderInfo.stage = vk::ShaderStageFlagBits::eVertex;
@@ -381,12 +389,19 @@ GraphicsPipelineOutBundle create_graphics_pipeline(
   pipelineInfo.pRasterizationState = &rasterizer;
 
   // Fragment Shader
-  if (debug)
+  bool ownsFragmentShader = false;
+  vk::ShaderModule fragmentShader;
+  if (specification.fragmentModule)
   {
-    std::cout << "Create fragment shader module" << std::endl;
+    fragmentShader = specification.fragmentModule;
   }
-  vk::ShaderModule fragmentShader =
-    vkwave::createModule(specification.fragmentFilepath, specification.device, debug);
+  else
+  {
+    if (debug)
+      std::cout << "Create fragment shader module" << std::endl;
+    fragmentShader = vkwave::createModule(specification.fragmentFilepath, specification.device, debug);
+    ownsFragmentShader = true;
+  }
   vk::PipelineShaderStageCreateInfo fragmentShaderInfo = {};
   fragmentShaderInfo.flags = vk::PipelineShaderStageCreateFlags();
   fragmentShaderInfo.stage = vk::ShaderStageFlagBits::eFragment;
@@ -463,20 +478,34 @@ GraphicsPipelineOutBundle create_graphics_pipeline(
 
   // Pipeline Layout - use existing if provided, otherwise create new
   vk::PipelineLayout pipelineLayout;
+  std::vector<vk::DescriptorSetLayout> reflectedDSLayouts;
   if (specification.existingPipelineLayout)
   {
     if (debug)
-    {
       std::cout << "Using existing Pipeline Layout" << std::endl;
-    }
     pipelineLayout = specification.existingPipelineLayout;
+  }
+  else if (specification.reflection)
+  {
+    if (debug)
+      std::cout << "Create Pipeline Layout (reflection-driven)" << std::endl;
+
+    auto& refl = *specification.reflection;
+    reflectedDSLayouts = refl.create_descriptor_set_layouts(specification.device);
+
+    vk::PipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.pushConstantRangeCount =
+      static_cast<uint32_t>(refl.push_constant_ranges().size());
+    layoutInfo.pPushConstantRanges = refl.push_constant_ranges().data();
+    layoutInfo.setLayoutCount = static_cast<uint32_t>(reflectedDSLayouts.size());
+    layoutInfo.pSetLayouts = reflectedDSLayouts.data();
+
+    pipelineLayout = specification.device.createPipelineLayout(layoutInfo);
   }
   else
   {
     if (debug)
-    {
       std::cout << "Create Pipeline Layout" << std::endl;
-    }
     pipelineLayout =
       make_pipeline_layout(specification.device, specification.descriptorSetLayout,
         specification.pushConstantRanges, debug);
@@ -550,10 +579,13 @@ GraphicsPipelineOutBundle create_graphics_pipeline(
   output.layout = pipelineLayout;
   output.renderpass = renderpass;
   output.pipeline = graphicsPipeline;
+  output.descriptorSetLayouts = std::move(reflectedDSLayouts);
 
-  // Finally clean up by destroying shader modules
-  specification.device.destroyShaderModule(vertexShader);
-  specification.device.destroyShaderModule(fragmentShader);
+  // Clean up shader modules we created (not caller-owned ones)
+  if (ownsVertexShader)
+    specification.device.destroyShaderModule(vertexShader);
+  if (ownsFragmentShader)
+    specification.device.destroyShaderModule(fragmentShader);
 
   return output;
 }

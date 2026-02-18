@@ -68,6 +68,10 @@ public:
   /// @brief Get the index buffer handle (for ray tracing).
   [[nodiscard]] vk::Buffer index_buffer() const { return m_index_buffer ? m_index_buffer->buffer() : VK_NULL_HANDLE; }
 
+  /// Unit cube: 24 vertices (4 per face, proper face normals), 36 indices.
+  /// Each face has a distinct color.
+  static std::unique_ptr<Mesh> create_cube(const Device& device);
+
 private:
   std::string m_name;
 
