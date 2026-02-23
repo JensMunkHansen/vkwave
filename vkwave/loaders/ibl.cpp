@@ -2,6 +2,7 @@
 #include <vkwave/core/buffer.h>
 #include <vkwave/config.h>
 #include <vkwave/core/device.h>
+#include <vkwave/pipeline/shader_compiler.h>
 #include <vkwave/pipeline/shaders.h>
 
 #include <spdlog/spdlog.h>
@@ -138,7 +139,7 @@ struct ComputePipeline
   vk::DescriptorSetLayout desc_layout;
 };
 
-ComputePipeline create_compute_pipeline(vk::Device dev, const std::string& spv_path,
+ComputePipeline create_compute_pipeline(vk::Device dev, const std::string& shader_path,
   std::vector<vk::DescriptorSetLayoutBinding> bindings, uint32_t push_constant_size)
 {
   ComputePipeline result{};
@@ -162,8 +163,9 @@ ComputePipeline create_compute_pipeline(vk::Device dev, const std::string& spv_p
   pl_ci.pPushConstantRanges = &push_range;
   result.layout = dev.createPipelineLayout(pl_ci);
 
-  // Shader module
-  auto module = createModule(spv_path, dev, true);
+  // Compile from GLSL source and create shader module
+  auto compiled = ShaderCompiler::compile(shader_path, vk::ShaderStageFlagBits::eCompute);
+  auto module = ShaderCompiler::create_module(dev, compiled.spirv);
 
   vk::PipelineShaderStageCreateInfo stage{};
   stage.stage = vk::ShaderStageFlagBits::eCompute;
@@ -488,7 +490,7 @@ void IBL::run_compute_generation()
   // --- Create compute pipelines ---
 
   // 1. Equirect to cubemap: sampler2D + imageCube
-  auto equirect_pipeline = create_compute_pipeline(dev, SHADER_DIR "equirect_to_cubemap.spv",
+  auto equirect_pipeline = create_compute_pipeline(dev, SHADER_DIR "equirect_to_cubemap.comp",
     {
       { 0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eCompute },
       { 1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute }
@@ -496,7 +498,7 @@ void IBL::run_compute_generation()
     8); // face(4) + resolution(4)
 
   // 2. Irradiance: samplerCube + imageCube
-  auto irradiance_pipeline = create_compute_pipeline(dev, SHADER_DIR "irradiance.spv",
+  auto irradiance_pipeline = create_compute_pipeline(dev, SHADER_DIR "irradiance.comp",
     {
       { 0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eCompute },
       { 1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute }
@@ -504,7 +506,7 @@ void IBL::run_compute_generation()
     16); // face(4) + resolution(4) + sampleCount(4) + envResolution(4)
 
   // 3. Prefilter: samplerCube + imageCube
-  auto prefilter_pipeline = create_compute_pipeline(dev, SHADER_DIR "prefilter_env.spv",
+  auto prefilter_pipeline = create_compute_pipeline(dev, SHADER_DIR "prefilter_env.comp",
     {
       { 0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eCompute },
       { 1, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute }
@@ -512,7 +514,7 @@ void IBL::run_compute_generation()
     20); // face(4) + resolution(4) + roughness(4) + sampleCount(4) + envResolution(4)
 
   // 4. BRDF LUT: image2D only
-  auto brdf_pipeline = create_compute_pipeline(dev, SHADER_DIR "brdf_lut.spv",
+  auto brdf_pipeline = create_compute_pipeline(dev, SHADER_DIR "brdf_lut.comp",
     {
       { 0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute }
     },
@@ -1023,7 +1025,7 @@ void IBL::create_default_environment()
   m_brdf_lut_sampler = dev.createSampler(sampler_info);
 
   // Generate BRDF LUT via compute shader
-  auto brdf_pipeline = create_compute_pipeline(dev, SHADER_DIR "brdf_lut.spv",
+  auto brdf_pipeline = create_compute_pipeline(dev, SHADER_DIR "brdf_lut.comp",
     { { 0, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute } },
     8);
 

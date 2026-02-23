@@ -8,6 +8,8 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <filesystem>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 static constexpr bool kDebug =
@@ -21,75 +23,16 @@ static constexpr bool kDebug =
 // Offscreen HDR image management
 // ---------------------------------------------------------------------------
 
-void Scene::create_hdr_images(vk::Extent2D extent, uint32_t count)
+void Scene::create_hdr_images(const vkwave::Device& device,
+  vk::Extent2D extent, uint32_t count)
 {
-  auto dev = m_app->device.device();
-
+  hdr_images.clear();
   for (uint32_t i = 0; i < count; ++i)
   {
-    OffscreenImage img{};
-
-    // Create image
-    vk::ImageCreateInfo image_info{};
-    image_info.imageType = vk::ImageType::e2D;
-    image_info.extent = vk::Extent3D{ extent.width, extent.height, 1 };
-    image_info.mipLevels = 1;
-    image_info.arrayLayers = 1;
-    image_info.format = kHdrFormat;
-    image_info.tiling = vk::ImageTiling::eOptimal;
-    image_info.initialLayout = vk::ImageLayout::eUndefined;
-    image_info.usage =
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled;
-    image_info.sharingMode = vk::SharingMode::eExclusive;
-    image_info.samples = vk::SampleCountFlagBits::e1;
-
-    img.image = dev.createImage(image_info);
-
-    // Allocate memory
-    auto mem_reqs = dev.getImageMemoryRequirements(img.image);
-    vk::MemoryAllocateInfo alloc_info{};
-    alloc_info.allocationSize = mem_reqs.size;
-    alloc_info.memoryTypeIndex = m_app->device.find_memory_type(
-      mem_reqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
-    img.memory = dev.allocateMemory(alloc_info);
-    dev.bindImageMemory(img.image, img.memory, 0);
-
-    // Create image view
-    vk::ImageViewCreateInfo view_info{};
-    view_info.image = img.image;
-    view_info.viewType = vk::ImageViewType::e2D;
-    view_info.format = kHdrFormat;
-    view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    view_info.subresourceRange.baseMipLevel = 0;
-    view_info.subresourceRange.levelCount = 1;
-    view_info.subresourceRange.baseArrayLayer = 0;
-    view_info.subresourceRange.layerCount = 1;
-
-    auto name = fmt::format("hdr_image_{}", i);
-    m_app->device.create_image_view(view_info, &img.view, name);
-    m_app->device.set_debug_name(
-      reinterpret_cast<uint64_t>(static_cast<VkImage>(img.image)),
-      vk::ObjectType::eImage, name);
-
-    hdr_images.push_back(img);
+    hdr_images.emplace_back(device, kHdrFormat, extent,
+      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+      fmt::format("hdr_image_{}", i));
   }
-
-  spdlog::debug("Created {} HDR images ({}x{})", count, extent.width, extent.height);
-}
-
-void Scene::destroy_hdr_images()
-{
-  auto dev = m_app->device.device();
-  for (auto& img : hdr_images)
-  {
-    if (img.view)
-      dev.destroyImageView(img.view);
-    if (img.image)
-      dev.destroyImage(img.image);
-    if (img.memory)
-      dev.freeMemory(img.memory);
-  }
-  hdr_images.clear();
 }
 
 void Scene::create_sampler()
@@ -108,13 +51,124 @@ void Scene::create_sampler()
 }
 
 // ---------------------------------------------------------------------------
+// Fallback textures (1x1 pixels for missing material slots)
+// ---------------------------------------------------------------------------
+
+void Scene::create_fallback_textures()
+{
+  // White (base color, AO fallback)
+  const uint8_t white[] = { 255, 255, 255, 255 };
+  fallback_white = std::make_unique<vkwave::Texture>(
+    m_app->device, "fallback_white", white, 1, 1, false);
+
+  // Flat normal (128,128,255 = (0,0,1) in tangent space)
+  const uint8_t flat_normal[] = { 128, 128, 255, 255 };
+  fallback_normal = std::make_unique<vkwave::Texture>(
+    m_app->device, "fallback_normal", flat_normal, 1, 1, true);
+
+  // Default metallic-roughness: non-metallic, medium roughness
+  // glTF: G=roughness, B=metallic → (0, 128, 0, 255) = roughness 0.5, metallic 0
+  const uint8_t default_mr[] = { 0, 128, 0, 255 };
+  fallback_mr = std::make_unique<vkwave::Texture>(
+    m_app->device, "fallback_mr", default_mr, 1, 1, true);
+
+  // Black (emissive fallback)
+  const uint8_t black[] = { 0, 0, 0, 255 };
+  fallback_black = std::make_unique<vkwave::Texture>(
+    m_app->device, "fallback_black", black, 1, 1, false);
+}
+
+// ---------------------------------------------------------------------------
+// Write PBR texture descriptors to execution group
+// ---------------------------------------------------------------------------
+
+void Scene::write_pbr_descriptors(vkwave::ExecutionGroup& group)
+{
+  auto tex_or = [](const std::unique_ptr<vkwave::Texture>& tex,
+                   const std::unique_ptr<vkwave::Texture>& fallback)
+    -> const vkwave::Texture&
+  {
+    return tex ? *tex : *fallback;
+  };
+
+  // Material textures (bindings 1-5)
+  auto& base = tex_or(gltf_model.baseColorTexture, fallback_white);
+  group.write_image_descriptor(0, 1, base.image_view(), base.sampler());
+
+  auto& norm = tex_or(gltf_model.normalTexture, fallback_normal);
+  group.write_image_descriptor(0, 2, norm.image_view(), norm.sampler());
+
+  auto& mr = tex_or(gltf_model.metallicRoughnessTexture, fallback_mr);
+  group.write_image_descriptor(0, 3, mr.image_view(), mr.sampler());
+
+  auto& emis = tex_or(gltf_model.emissiveTexture, fallback_black);
+  group.write_image_descriptor(0, 4, emis.image_view(), emis.sampler());
+
+  auto& ao = tex_or(gltf_model.aoTexture, fallback_white);
+  group.write_image_descriptor(0, 5, ao.image_view(), ao.sampler());
+
+  // IBL textures (bindings 6-8)
+  group.write_image_descriptor(0, 6,
+    ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
+  group.write_image_descriptor(0, 7,
+    ibl->irradiance_view(), ibl->irradiance_sampler());
+  group.write_image_descriptor(0, 8,
+    ibl->prefiltered_view(), ibl->prefiltered_sampler());
+}
+
+// ---------------------------------------------------------------------------
 // Scene construction
 // ---------------------------------------------------------------------------
 
 Scene::Scene(App& app)
   : m_app(&app)
 {
-  cube_mesh = vkwave::Mesh::create_cube(app.device);
+  // Load model or fall back to cube
+  if (!app.config.model_path.empty())
+  {
+    if (!std::filesystem::exists(app.config.model_path))
+    {
+      spdlog::warn("Model file not found: {} -- using default cube", app.config.model_path);
+    }
+    else
+    {
+      spdlog::info("Loading glTF model: {}", app.config.model_path);
+      gltf_model = vkwave::load_gltf_model(app.device, app.config.model_path);
+    }
+  }
+
+  if (!gltf_model.mesh)
+  {
+    spdlog::info("Using default cube mesh");
+    cube_mesh = vkwave::Mesh::create_cube(app.device);
+  }
+
+  const vkwave::Mesh* active_mesh = gltf_model.mesh
+    ? gltf_model.mesh.get()
+    : cube_mesh.get();
+
+  // Create IBL resources
+  if (!app.config.hdr_path.empty())
+  {
+    if (!std::filesystem::exists(app.config.hdr_path))
+    {
+      spdlog::warn("HDR file not found: {} -- using default neutral IBL", app.config.hdr_path);
+      ibl = std::make_unique<vkwave::IBL>(app.device);
+    }
+    else
+    {
+      spdlog::info("Loading HDR environment: {}", app.config.hdr_path);
+      ibl = std::make_unique<vkwave::IBL>(app.device, app.config.hdr_path);
+    }
+  }
+  else
+  {
+    spdlog::info("Using default neutral IBL environment");
+    ibl = std::make_unique<vkwave::IBL>(app.device);
+  }
+
+  // Create fallback textures for missing material slots
+  create_fallback_textures();
 
   camera.set_position(0.0f, 1.5f, 3.0f);
   camera.set_focal_point(0.0f, 0.0f, 0.0f);
@@ -131,25 +185,25 @@ Scene::Scene(App& app)
   // Create sampler (persistent across resize)
   create_sampler();
 
-  // Cube pass: renders to offscreen HDR image
-  auto cube_spec = vkwave::CubePass::pipeline_spec();
-  cube_spec.existing_renderpass = scene_renderpass;
+  // PBR pass: renders to offscreen HDR image
+  auto pbr_spec = vkwave::PBRPass::pipeline_spec();
+  pbr_spec.existing_renderpass = scene_renderpass;
 
-  // One HDR image per offscreen slot — eliminates WAW hazard
+  // One HDR image per offscreen slot -- eliminates WAW hazard
   const uint32_t os_depth = app.swapchain.image_count();
-  create_hdr_images(app.swapchain.extent(), os_depth);
+  create_hdr_images(app.device, app.swapchain.extent(), os_depth);
 
   std::vector<vk::ImageView> hdr_views;
   hdr_views.reserve(os_depth);
   for (uint32_t i = 0; i < os_depth; ++i)
-    hdr_views.push_back(hdr_images[i].view);
+    hdr_views.push_back(hdr_images[i].image_view());
 
-  auto& cube_group = app.graph.add_offscreen_group("cube", cube_spec, kHdrFormat, kDebug);
-  cube_group.set_color_views(hdr_views);
-  cube_pass.group = &cube_group;
-  cube_pass.mesh = cube_mesh.get();
-  cube_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
-    cube_pass.record(cmd);
+  auto& pbr_group = app.graph.add_offscreen_group("pbr", pbr_spec, kHdrFormat, kDebug);
+  pbr_group.set_color_views(hdr_views);
+  pbr_pass.group = &pbr_group;
+  pbr_pass.mesh = active_mesh;
+  pbr_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
+    pbr_pass.record(cmd);
   });
 
   // Composite pass: samples HDR image, tonemaps, writes to swapchain
@@ -166,17 +220,17 @@ Scene::Scene(App& app)
     auto slot = m_app->graph.last_offscreen_slot();
     auto& cg = static_cast<vkwave::ExecutionGroup&>(m_app->graph.present_group());
     cg.write_image_descriptor(0, 0, frame_index,
-      hdr_images[slot].view, hdr_sampler);
+      hdr_images[slot].image_view(), hdr_sampler);
     composite_pass.record(cmd);
   });
 
-  // Gate present at display refresh rate — offscreen runs at GPU speed,
+  // Gate present at display refresh rate -- offscreen runs at GPU speed,
   // present only acquires/presents when the display needs a new frame.
   float refresh = static_cast<float>(app.window.refresh_rate());
   if (refresh > 0.0f)
     comp_group.set_gating(vkwave::GatingMode::wall_clock, refresh);
 
-  // ImGui overlay — records into the composite group's command buffer
+  // ImGui overlay -- records into the composite group's command buffer
   imgui = std::make_unique<vkwave::ImGuiOverlay>(
     app.instance.instance(), app.device,
     app.window.get(), app.swapchain.image_format(),
@@ -189,16 +243,14 @@ Scene::Scene(App& app)
 
   // Set resize callback so the graph can recreate offscreen images on resize
   app.graph.set_resize_fn([this](vk::Extent2D extent) {
-    destroy_hdr_images();
-
     auto depth = m_app->graph.offscreen_depth();
-    create_hdr_images(extent, depth);
+    create_hdr_images(m_app->device, extent, depth);
 
-    // Update cube group's color views (one HDR image per slot)
+    // Update PBR group's color views (one HDR image per slot)
     std::vector<vk::ImageView> views;
     views.reserve(depth);
     for (uint32_t i = 0; i < depth; ++i)
-      views.push_back(hdr_images[i].view);
+      views.push_back(hdr_images[i].image_view());
     auto& cg = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
     cg.set_color_views(views);
   });
@@ -206,12 +258,13 @@ Scene::Scene(App& app)
   // Build all frame resources
   app.graph.build(app.swapchain);
 
-  // Write HDR image descriptor to composite pass (after build allocates descriptor sets)
-  // Use the first HDR image view — since the scene renderpass transitions to
-  // eShaderReadOnlyOptimal, the composite pass can sample it
-  comp_group.write_image_descriptor(0, 0, hdr_images[0].view, hdr_sampler);
+  // Write texture descriptors (after build allocates descriptor sets)
+  write_pbr_descriptors(pbr_group);
 
-  // Overlay framebuffers reference swapchain image views — create after build
+  // Write HDR image descriptor to composite pass
+  comp_group.write_image_descriptor(0, 0, hdr_images[0].image_view(), hdr_sampler);
+
+  // Overlay framebuffers reference swapchain image views -- create after build
   imgui->create_frame_resources(app.swapchain, app.swapchain.image_count());
 }
 
@@ -220,7 +273,7 @@ Scene::~Scene()
   m_app->device.device().waitIdle();
 
   imgui.reset();
-  destroy_hdr_images();
+  hdr_images.clear();
 
   auto dev = m_app->device.device();
   if (hdr_sampler)
@@ -241,7 +294,11 @@ void Scene::resize(const vkwave::Swapchain& swapchain)
 
   // Update composite pass's HDR image descriptor after resize rebuilt everything
   auto& comp_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.present_group());
-  comp_group.write_image_descriptor(0, 0, hdr_images[0].view, hdr_sampler);
+  comp_group.write_image_descriptor(0, 0, hdr_images[0].image_view(), hdr_sampler);
+
+  // Re-write PBR texture descriptors (descriptor sets were recreated)
+  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
+  write_pbr_descriptors(pbr_group);
 }
 
 void Scene::update(vkwave::RenderGraph& graph)
@@ -249,9 +306,10 @@ void Scene::update(vkwave::RenderGraph& graph)
   camera.set_aspect_ratio(
     static_cast<float>(graph.offscreen_group(0).extent().width) /
     static_cast<float>(graph.offscreen_group(0).extent().height));
-  cube_pass.view_projection = camera.view_projection_matrix();
-  cube_pass.model = glm::rotate(glm::mat4(1.0f),
+  pbr_pass.view_projection = camera.view_projection_matrix();
+  pbr_pass.cam_position = camera.position();
+  pbr_pass.model = glm::rotate(glm::mat4(1.0f),
     glm::radians(45.0f) * graph.elapsed_time(),
     glm::vec3(0.0f, 1.0f, 0.0f));
-  cube_pass.time = graph.elapsed_time();
+  pbr_pass.time = graph.elapsed_time();
 }

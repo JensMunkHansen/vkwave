@@ -47,6 +47,14 @@ AppConfig load_config(const std::string& path)
       cfg.use_x11 = toml::find_or(platform, "use_x11", false);
     }
 
+    // [scene]
+    if (data.contains("scene"))
+    {
+      auto& scene = toml::find(data, "scene");
+      cfg.model_path = toml::find_or(scene, "model_path", std::string{});
+      cfg.hdr_path = toml::find_or(scene, "hdr_path", std::string{});
+    }
+
     // [debug]
     if (data.contains("debug"))
     {

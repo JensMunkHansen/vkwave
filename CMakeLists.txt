@@ -62,6 +62,8 @@ if(SPS_LLVM_COVERAGE)
   sps_enable_llvm_coverage()
 endif()
 
+include(FetchAssets.cmake)
+
 add_subdirectory(vkwave)
 add_subdirectory(app)
 

@@ -24,6 +24,10 @@ struct AppConfig
   // [platform]
   bool use_x11{ false };
 
+  // [scene]
+  std::string model_path;   // glTF model path (empty = default cube)
+  std::string hdr_path;     // HDR environment map path (empty = default neutral)
+
   // [debug]
   uint64_t max_frames{ 0 };  // 0 = unlimited, >0 = exit after N frames
 };

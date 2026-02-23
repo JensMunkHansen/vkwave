@@ -1,0 +1,126 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0) uniform samplerCube u_environment;
+layout(binding = 1, rgba32f) writeonly uniform imageCube u_prefiltered;
+
+layout(push_constant) uniform PC {
+  uint face;
+  uint resolution;
+  float roughness;
+  uint sampleCount;
+  uint envResolution;
+};
+
+#define MATH_PI 3.1415926535897932384626433832795
+
+// Vulkan cubemap face convention
+vec3 uvToXYZ(int face, vec2 uv)
+{
+  if (face == 0) return vec3( 1.0, -uv.y, -uv.x);
+  if (face == 1) return vec3(-1.0, -uv.y,  uv.x);
+  if (face == 2) return vec3( uv.x,  1.0,  uv.y);
+  if (face == 3) return vec3( uv.x, -1.0, -uv.y);
+  if (face == 4) return vec3( uv.x, -uv.y,  1.0);
+  return            vec3(-uv.x, -uv.y, -1.0);
+}
+
+float radicalInverse_VdC(uint bits)
+{
+  bits = (bits << 16u) | (bits >> 16u);
+  bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+  bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+  bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+  bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+  return float(bits) * 2.3283064365386963e-10;
+}
+
+vec2 hammersley2d(uint i, uint N)
+{
+  return vec2(float(i) / float(N), radicalInverse_VdC(i));
+}
+
+mat3 generateTBN(vec3 normal)
+{
+  vec3 bitangent = vec3(0.0, 1.0, 0.0);
+
+  float NdotUp = dot(normal, vec3(0.0, 1.0, 0.0));
+  if (1.0 - abs(NdotUp) <= 1e-7)
+  {
+    bitangent = NdotUp > 0.0 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 0.0, -1.0);
+  }
+
+  vec3 tangent = normalize(cross(bitangent, normal));
+  bitangent = cross(normal, tangent);
+
+  return mat3(tangent, bitangent, normal);
+}
+
+// GGX NDF (Khronos reference)
+float D_GGX(float NdotH, float alpha)
+{
+  float a = NdotH * alpha;
+  float k = alpha / (1.0 - NdotH * NdotH + a * a);
+  return k * k * (1.0 / MATH_PI);
+}
+
+float computeLod(float pdf, float width, float numSamples)
+{
+  return 0.5 * log2(6.0 * width * width / (numSamples * pdf));
+}
+
+void main()
+{
+  uvec2 pos = gl_GlobalInvocationID.xy;
+  if (pos.x >= resolution || pos.y >= resolution)
+    return;
+
+  vec2 uv = (vec2(pos) + 0.5) / float(resolution) * 2.0 - 1.0;
+  vec3 N = normalize(uvToXYZ(int(face), uv));
+  vec3 V = N; // Assumption: V = N for prefiltering (isotropic)
+
+  float alpha = roughness * roughness;
+
+  vec3 color = vec3(0.0);
+  float weight = 0.0;
+
+  for (uint i = 0; i < sampleCount; ++i)
+  {
+    vec2 xi = hammersley2d(i, sampleCount);
+
+    // GGX importance sampling (Khronos reference)
+    float cosTheta = clamp(sqrt((1.0 - xi.y) / (1.0 + (alpha * alpha - 1.0) * xi.y)), 0.0, 1.0);
+    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+    float phi = 2.0 * MATH_PI * xi.x;
+
+    vec3 localH = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+
+    mat3 TBN = generateTBN(N);
+    vec3 H = TBN * localH;
+
+    // Reflect V about H to get L
+    vec3 L = normalize(2.0 * dot(V, H) * H - V);
+
+    float NdotL = dot(N, L);
+
+    if (NdotL > 0.0)
+    {
+      // GGX PDF for half vector, Jacobian for parameterization over L
+      float pdf = D_GGX(cosTheta, alpha) / 4.0;
+
+      float lod = computeLod(pdf, float(envResolution), float(sampleCount));
+
+      if (roughness == 0.0)
+        lod = 0.0;
+
+      color += textureLod(u_environment, L, lod).rgb * NdotL;
+      weight += NdotL;
+    }
+  }
+
+  if (weight > 0.0)
+    color /= weight;
+
+  imageStore(u_prefiltered, ivec3(pos, int(face)), vec4(color, 1.0));
+}

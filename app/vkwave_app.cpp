@@ -127,7 +127,31 @@ int main(int argc, char** argv)
     scene.imgui->new_frame();
     ImGui::Begin("vkwave");
     ImGui::Text("%.0f fps", 1.0f / app.graph.delta_time());
+    ImGui::Separator();
+
+    // PBR debug modes
+    const char* debug_modes[] = {
+      "Final", "Normals", "Base Color", "Metallic",
+      "Roughness", "AO", "Emissive"
+    };
+    ImGui::Combo("Debug Mode", &scene.pbr_pass.debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
+
+    ImGui::Separator();
     ImGui::SliderFloat("Exposure", &scene.composite_pass.exposure, 0.1f, 5.0f);
+
+    // Light controls
+    ImGui::Separator();
+    ImGui::Text("Directional Light");
+    ImGui::SliderFloat3("Direction", &scene.pbr_pass.light_direction.x, -1.0f, 1.0f);
+    ImGui::SliderFloat("Intensity", &scene.pbr_pass.light_intensity, 0.0f, 10.0f);
+    ImGui::ColorEdit3("Light Color", &scene.pbr_pass.light_color.x);
+
+    // Material overrides
+    ImGui::Separator();
+    ImGui::Text("Material Overrides");
+    ImGui::SliderFloat("Metallic", &scene.pbr_pass.metallic_factor, 0.0f, 1.0f);
+    ImGui::SliderFloat("Roughness", &scene.pbr_pass.roughness_factor, 0.0f, 1.0f);
+
     ImGui::End();
 
     if (!app.render_frame())
