@@ -1,4 +1,4 @@
-#include "app.h"
+#include "engine.h"
 
 #include <vkwave/config.h>
 
@@ -16,7 +16,7 @@ static constexpr bool kDebug =
   false;
 #endif
 
-App::App(const AppConfig& cfg)
+Engine::Engine(const AppConfig& cfg)
   : window(cfg.window_title, cfg.window_width, cfg.window_height,
       true, true, parse_window_mode(cfg.window_mode))
   , instance(cfg.window_title.c_str(), cfg.window_title.c_str(),
@@ -32,17 +32,17 @@ App::App(const AppConfig& cfg)
 {
 }
 
-App::~App()
+Engine::~Engine()
 {
   graph.drain();
 }
 
-bool App::render_frame()
+bool Engine::render_frame()
 {
   return graph.render_frame(swapchain);
 }
 
-bool App::handle_resize()
+bool Engine::handle_resize()
 {
   if (!window.has_pending_resize())
     return false;
@@ -66,7 +66,7 @@ bool App::handle_resize()
   return true;
 }
 
-vkwave::Device App::create_device(const std::string& preferred_gpu)
+vkwave::Device Engine::create_device(const std::string& preferred_gpu)
 {
   static const char* extensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME

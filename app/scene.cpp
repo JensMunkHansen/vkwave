@@ -1,5 +1,5 @@
 #include "scene.h"
-#include "app.h"
+#include "engine.h"
 
 #include <vkwave/core/device.h>
 #include <vkwave/core/swapchain.h>
@@ -47,7 +47,7 @@ void Scene::create_sampler()
   info.unnormalizedCoordinates = VK_FALSE;
   info.mipmapMode = vk::SamplerMipmapMode::eLinear;
 
-  hdr_sampler = m_app->device.device().createSampler(info);
+  hdr_sampler = m_engine->device.device().createSampler(info);
 }
 
 // ---------------------------------------------------------------------------
@@ -59,23 +59,23 @@ void Scene::create_fallback_textures()
   // White (base color, AO fallback)
   const uint8_t white[] = { 255, 255, 255, 255 };
   fallback_white = std::make_unique<vkwave::Texture>(
-    m_app->device, "fallback_white", white, 1, 1, false);
+    m_engine->device, "fallback_white", white, 1, 1, false);
 
   // Flat normal (128,128,255 = (0,0,1) in tangent space)
   const uint8_t flat_normal[] = { 128, 128, 255, 255 };
   fallback_normal = std::make_unique<vkwave::Texture>(
-    m_app->device, "fallback_normal", flat_normal, 1, 1, true);
+    m_engine->device, "fallback_normal", flat_normal, 1, 1, true);
 
   // Default metallic-roughness: non-metallic, medium roughness
   // glTF: G=roughness, B=metallic → (0, 128, 0, 255) = roughness 0.5, metallic 0
   const uint8_t default_mr[] = { 0, 128, 0, 255 };
   fallback_mr = std::make_unique<vkwave::Texture>(
-    m_app->device, "fallback_mr", default_mr, 1, 1, true);
+    m_engine->device, "fallback_mr", default_mr, 1, 1, true);
 
   // Black (emissive fallback)
   const uint8_t black[] = { 0, 0, 0, 255 };
   fallback_black = std::make_unique<vkwave::Texture>(
-    m_app->device, "fallback_black", black, 1, 1, false);
+    m_engine->device, "fallback_black", black, 1, 1, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -133,8 +133,8 @@ void Scene::write_pbr_descriptors(vkwave::ExecutionGroup& group)
 // Scene construction
 // ---------------------------------------------------------------------------
 
-Scene::Scene(App& app)
-  : m_app(&app)
+Scene::Scene(Engine& app)
+  : m_engine(&app)
 {
   // Load model or fall back to cube
   if (!app.config.model_path.empty())
@@ -283,8 +283,8 @@ Scene::Scene(App& app)
     // Update descriptor to sample from the latest offscreen HDR image.
     // begin_frame() already waited for this slot's previous use, so the
     // descriptor set is safe to update.
-    auto slot = m_app->graph.last_offscreen_slot();
-    auto& cg = static_cast<vkwave::ExecutionGroup&>(m_app->graph.present_group());
+    auto slot = m_engine->graph.last_offscreen_slot();
+    auto& cg = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.present_group());
     cg.write_image_descriptor(0, "hdrImage", frame_index,
       hdr_images[slot].image_view(), hdr_sampler);
     composite_pass.record(cmd);
@@ -309,15 +309,15 @@ Scene::Scene(App& app)
 
   // Set resize callback so the graph can recreate offscreen images on resize
   app.graph.set_resize_fn([this](vk::Extent2D extent) {
-    auto depth = m_app->graph.offscreen_depth();
-    create_hdr_images(m_app->device, extent, depth);
+    auto depth = m_engine->graph.offscreen_depth();
+    create_hdr_images(m_engine->device, extent, depth);
 
     // Update PBR group's color views (one HDR image per slot)
     std::vector<vk::ImageView> views;
     views.reserve(depth);
     for (uint32_t i = 0; i < depth; ++i)
       views.push_back(hdr_images[i].image_view());
-    auto& cg = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
+    auto& cg = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
     cg.set_color_views(views);
   });
 
@@ -347,12 +347,12 @@ Scene::Scene(App& app)
 
 Scene::~Scene()
 {
-  m_app->device.device().waitIdle();
+  m_engine->device.device().waitIdle();
 
   imgui.reset();
   hdr_images.clear();
 
-  auto dev = m_app->device.device();
+  auto dev = m_engine->device.device();
   if (hdr_sampler)
     dev.destroySampler(hdr_sampler);
   if (scene_renderpass)
@@ -364,23 +364,23 @@ Scene::~Scene()
 void Scene::switch_ibl(const std::string& hdr_path)
 {
   // Drain GPU — in-flight descriptor sets still reference old IBL views
-  m_app->graph.drain();
+  m_engine->graph.drain();
 
   // Create new IBL (old one destroyed by unique_ptr reassignment)
   if (hdr_path.empty() || !std::filesystem::exists(hdr_path))
   {
     if (!hdr_path.empty())
       spdlog::warn("HDR file not found: {} -- using neutral IBL", hdr_path);
-    ibl = std::make_unique<vkwave::IBL>(m_app->device);
+    ibl = std::make_unique<vkwave::IBL>(m_engine->device);
   }
   else
   {
     spdlog::info("Switching IBL to: {}", hdr_path);
-    ibl = std::make_unique<vkwave::IBL>(m_app->device, hdr_path);
+    ibl = std::make_unique<vkwave::IBL>(m_engine->device, hdr_path);
   }
 
   // Rewrite IBL descriptors (set 2: per-scene globals)
-  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
+  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
   pbr_group.write_image_descriptor(2, "brdfLUT", ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
   pbr_group.write_image_descriptor(2, "irradianceMap", ibl->irradiance_view(), ibl->irradiance_sampler());
   pbr_group.write_image_descriptor(2, "prefilterMap", ibl->prefiltered_view(), ibl->prefiltered_sampler());
@@ -389,9 +389,9 @@ void Scene::switch_ibl(const std::string& hdr_path)
 void Scene::switch_model(const std::string& model_path)
 {
   // Drain GPU — in-flight command buffers still reference old mesh/descriptors
-  m_app->graph.drain();
+  m_engine->graph.drain();
 
-  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
+  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
 
   // Reset old model data
   gltf_scene = {};
@@ -402,18 +402,18 @@ void Scene::switch_model(const std::string& model_path)
   if (!model_path.empty() && std::filesystem::exists(model_path))
   {
     spdlog::info("Switching model to: {}", model_path);
-    gltf_scene = vkwave::load_gltf_scene(m_app->device, model_path);
+    gltf_scene = vkwave::load_gltf_scene(m_engine->device, model_path);
     if (!gltf_scene.mesh)
     {
       spdlog::warn("Scene load returned no mesh, falling back to single-material loader");
-      gltf_model = vkwave::load_gltf_model(m_app->device, model_path);
+      gltf_model = vkwave::load_gltf_model(m_engine->device, model_path);
     }
   }
 
   if (!gltf_scene.mesh && !gltf_model.mesh)
   {
     spdlog::info("Using default cube mesh");
-    cube_mesh = vkwave::Mesh::create_cube(m_app->device);
+    cube_mesh = vkwave::Mesh::create_cube(m_engine->device);
   }
 
   const vkwave::Mesh* active_mesh = gltf_scene.mesh
@@ -454,7 +454,7 @@ void Scene::switch_model(const std::string& model_path)
   pbr_group.destroy_frame_resources();
   pbr_group.set_descriptor_count(1, mat_count);
   pbr_group.set_descriptor_count(2, 1);
-  pbr_group.create_frame_resources(pbr_group.extent(), m_app->graph.offscreen_depth());
+  pbr_group.create_frame_resources(pbr_group.extent(), m_engine->graph.offscreen_depth());
 
   // Rewrite all texture descriptors (material textures + IBL)
   write_pbr_descriptors(pbr_group);
@@ -469,11 +469,11 @@ void Scene::resize(const vkwave::Swapchain& swapchain)
   }
 
   // Update composite pass's HDR image descriptor after resize rebuilt everything
-  auto& comp_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.present_group());
+  auto& comp_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.present_group());
   comp_group.write_image_descriptor(0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
 
   // Re-write PBR texture descriptors (descriptor sets were recreated)
-  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
+  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
   write_pbr_descriptors(pbr_group);
 }
 

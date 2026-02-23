@@ -10,7 +10,7 @@
 #include <vkwave/pipeline/render_graph.h>
 
 /// Vulkan infrastructure: window, instance, device, swapchain, render graph.
-struct App
+struct Engine
 {
   vkwave::Window window;
   vkwave::Instance instance;
@@ -20,8 +20,8 @@ struct App
   vkwave::RenderGraph graph;
   AppConfig config;
 
-  explicit App(const AppConfig& cfg);
-  ~App();
+  explicit Engine(const AppConfig& cfg);
+  ~Engine();
 
   /// Run graph.render_frame(). Returns false on swapchain out-of-date.
   bool render_frame();
@@ -36,8 +36,8 @@ struct App
     return config.max_frames > 0 && graph.cpu_frame() >= config.max_frames;
   }
 
-  App(const App&) = delete;
-  App& operator=(const App&) = delete;
+  Engine(const Engine&) = delete;
+  Engine& operator=(const Engine&) = delete;
 
 private:
   vkwave::Device create_device(const std::string& preferred_gpu);

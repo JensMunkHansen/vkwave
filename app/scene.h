@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-struct App;
+struct Engine;
 namespace vkwave { class RenderGraph; class Swapchain; }
 
 /// Scene objects: camera, meshes, passes, offscreen resources.
@@ -52,7 +52,7 @@ struct Scene
   vk::RenderPass scene_renderpass{ VK_NULL_HANDLE };
   vk::RenderPass composite_renderpass{ VK_NULL_HANDLE };
 
-  explicit Scene(App& app);
+  explicit Scene(Engine& engine);
   ~Scene();
 
   Scene(const Scene&) = delete;
@@ -79,7 +79,7 @@ struct Scene
   int current_hdr_index{ 0 };
 
 private:
-  App* m_app;
+  Engine* m_engine;
 
   void create_hdr_images(const vkwave::Device& device, vk::Extent2D extent, uint32_t count);
   void create_sampler();

@@ -1,4 +1,4 @@
-#include "app.h"
+#include "engine.h"
 #include "input.h"
 #include "scene.h"
 
@@ -20,7 +20,7 @@
 
 struct Callbacks
 {
-  App* app;
+  Engine* app;
   Input* input;
 };
 
@@ -63,7 +63,7 @@ int main(int argc, char** argv)
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
 
-  App app(config);
+  Engine app(config);
   Input input;
 
   g_window = app.window.get();
