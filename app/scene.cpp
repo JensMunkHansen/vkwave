@@ -198,6 +198,17 @@ Scene::Scene(App& app)
   if (current_hdr_index < 0 && !app.config.hdr_paths.empty())
     current_hdr_index = 0;
 
+  // Determine which model_paths index matches the initial model_path
+  current_model_index = -1;
+  for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
+  {
+    if (app.config.model_paths[i] == app.config.model_path)
+    {
+      current_model_index = i;
+      break;
+    }
+  }
+
   // Create fallback textures for missing material slots
   create_fallback_textures();
 
@@ -231,17 +242,34 @@ Scene::Scene(App& app)
 
   auto& pbr_group = app.graph.add_offscreen_group("pbr", pbr_spec, kHdrFormat, kDebug);
   pbr_group.set_color_views(hdr_views);
-  pbr_pass.group = &pbr_group;
-  pbr_pass.mesh = active_mesh;
+
+  // Set up shared PBR context
+  pbr_ctx.group = &pbr_group;
+  pbr_ctx.mesh = active_mesh;
   if (gltf_scene.mesh && !gltf_scene.primitives.empty())
   {
-    pbr_pass.primitives = gltf_scene.primitives.data();
-    pbr_pass.primitive_count = static_cast<uint32_t>(gltf_scene.primitives.size());
-    pbr_pass.materials = gltf_scene.materials.data();
-    pbr_pass.material_count = static_cast<uint32_t>(gltf_scene.materials.size());
+    pbr_ctx.primitives = gltf_scene.primitives.data();
+    pbr_ctx.primitive_count = static_cast<uint32_t>(gltf_scene.primitives.size());
+    pbr_ctx.materials = gltf_scene.materials.data();
+    pbr_ctx.material_count = static_cast<uint32_t>(gltf_scene.materials.size());
+
+    for (auto& mat : gltf_scene.materials)
+    {
+      if (mat.alphaMode == vkwave::AlphaMode::Blend)
+      {
+        pbr_ctx.has_transparent = true;
+        break;
+      }
+    }
   }
+
+  // Wire passes to shared context
+  pbr_pass.ctx = &pbr_ctx;
+  blend_pass.ctx = &pbr_ctx;
+
   pbr_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
     pbr_pass.record(cmd);
+    blend_pass.record(cmd);
   });
 
   // Composite pass: samples HDR image, tonemaps, writes to swapchain
@@ -358,6 +386,80 @@ void Scene::switch_ibl(const std::string& hdr_path)
   pbr_group.write_image_descriptor(2, "prefilterMap", ibl->prefiltered_view(), ibl->prefiltered_sampler());
 }
 
+void Scene::switch_model(const std::string& model_path)
+{
+  // Drain GPU — in-flight command buffers still reference old mesh/descriptors
+  m_app->graph.drain();
+
+  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
+
+  // Reset old model data
+  gltf_scene = {};
+  gltf_model = {};
+  cube_mesh.reset();
+
+  // Load new model
+  if (!model_path.empty() && std::filesystem::exists(model_path))
+  {
+    spdlog::info("Switching model to: {}", model_path);
+    gltf_scene = vkwave::load_gltf_scene(m_app->device, model_path);
+    if (!gltf_scene.mesh)
+    {
+      spdlog::warn("Scene load returned no mesh, falling back to single-material loader");
+      gltf_model = vkwave::load_gltf_model(m_app->device, model_path);
+    }
+  }
+
+  if (!gltf_scene.mesh && !gltf_model.mesh)
+  {
+    spdlog::info("Using default cube mesh");
+    cube_mesh = vkwave::Mesh::create_cube(m_app->device);
+  }
+
+  const vkwave::Mesh* active_mesh = gltf_scene.mesh
+    ? gltf_scene.mesh.get()
+    : (gltf_model.mesh ? gltf_model.mesh.get() : cube_mesh.get());
+
+  // Update PBR context
+  pbr_ctx.mesh = active_mesh;
+  pbr_ctx.has_transparent = false;
+  if (gltf_scene.mesh && !gltf_scene.primitives.empty())
+  {
+    pbr_ctx.primitives = gltf_scene.primitives.data();
+    pbr_ctx.primitive_count = static_cast<uint32_t>(gltf_scene.primitives.size());
+    pbr_ctx.materials = gltf_scene.materials.data();
+    pbr_ctx.material_count = static_cast<uint32_t>(gltf_scene.materials.size());
+
+    for (auto& mat : gltf_scene.materials)
+    {
+      if (mat.alphaMode == vkwave::AlphaMode::Blend)
+      {
+        pbr_ctx.has_transparent = true;
+        break;
+      }
+    }
+  }
+  else
+  {
+    pbr_ctx.primitives = nullptr;
+    pbr_ctx.primitive_count = 0;
+    pbr_ctx.materials = nullptr;
+    pbr_ctx.material_count = 0;
+  }
+
+  // Rebuild PBR group's descriptor pool (material count may have changed)
+  uint32_t mat_count = gltf_scene.mesh && !gltf_scene.materials.empty()
+    ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
+
+  pbr_group.destroy_frame_resources();
+  pbr_group.set_descriptor_count(1, mat_count);
+  pbr_group.set_descriptor_count(2, 1);
+  pbr_group.create_frame_resources(pbr_group.extent(), m_app->graph.offscreen_depth());
+
+  // Rewrite all texture descriptors (material textures + IBL)
+  write_pbr_descriptors(pbr_group);
+}
+
 void Scene::resize(const vkwave::Swapchain& swapchain)
 {
   if (imgui)
@@ -380,10 +482,7 @@ void Scene::update(vkwave::RenderGraph& graph)
   camera.set_aspect_ratio(
     static_cast<float>(graph.offscreen_group(0).extent().width) /
     static_cast<float>(graph.offscreen_group(0).extent().height));
-  pbr_pass.view_projection = camera.view_projection_matrix();
-  pbr_pass.cam_position = camera.position();
-  pbr_pass.model = glm::rotate(glm::mat4(1.0f),
-    glm::radians(45.0f) * graph.elapsed_time(),
-    glm::vec3(0.0f, 1.0f, 0.0f));
-  pbr_pass.time = graph.elapsed_time();
+  pbr_ctx.view_projection = camera.view_projection_matrix();
+  pbr_ctx.cam_position = camera.position();
+  pbr_ctx.time = graph.elapsed_time();
 }

@@ -36,8 +36,12 @@ struct Scene
   std::unique_ptr<vkwave::Texture> fallback_mr;
   std::unique_ptr<vkwave::Texture> fallback_black;
 
+  // Shared PBR state (owned here, read by passes)
+  vkwave::PBRContext pbr_ctx{};
+
   // Passes
   vkwave::PBRPass pbr_pass{};
+  vkwave::BlendPass blend_pass{};
   vkwave::CompositePass composite_pass{};
   std::unique_ptr<vkwave::ImGuiOverlay> imgui;
 
@@ -63,6 +67,13 @@ struct Scene
   /// Switch to a different HDR environment. Drains GPU, creates new IBL,
   /// rewrites descriptors. Empty path = default neutral IBL.
   void switch_ibl(const std::string& hdr_path);
+
+  /// Index into config.model_paths for the currently loaded model (-1 = none).
+  int current_model_index{ -1 };
+
+  /// Switch to a different glTF model at runtime. Drains GPU, reloads
+  /// geometry and materials, rewrites descriptors. Empty path = default cube.
+  void switch_model(const std::string& model_path);
 
   /// Index into config.hdr_paths for the currently loaded IBL (-1 = neutral).
   int current_hdr_index{ 0 };

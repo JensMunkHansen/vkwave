@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.hpp>
 
+#include <memory>
 #include <string>
 
 namespace vkwave
@@ -64,6 +65,18 @@ public:
   /// @param offset Offset in buffer to write to.
   /// @note Buffer must be mapped or will be temporarily mapped.
   void update(const void* data, vk::DeviceSize size, vk::DeviceSize offset = 0);
+
+  /// @brief Create a DEVICE_LOCAL buffer via staging upload.
+  /// Allocates a temporary HOST_VISIBLE staging buffer, copies data into it,
+  /// then issues a one-shot vkCmdCopyBuffer to a DEVICE_LOCAL buffer.
+  /// @param device The Vulkan device wrapper.
+  /// @param name Debug name for the buffer.
+  /// @param data Source data pointer.
+  /// @param size Size in bytes.
+  /// @param usage Buffer usage flags (TRANSFER_DST is added automatically).
+  static std::unique_ptr<Buffer> create_device_local(
+    const Device& device, const std::string& name,
+    const void* data, vk::DeviceSize size, vk::BufferUsageFlags usage);
 
 protected:
   const Device* m_device{ nullptr };

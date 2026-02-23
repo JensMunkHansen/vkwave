@@ -308,8 +308,8 @@ std::unique_ptr<Mesh> load_gltf(const Device& device, const std::string& filepat
     spdlog::trace("Computed smooth vertex normals for glTF mesh");
   }
 
-  spdlog::trace("Loaded glTF mesh '{}': {} vertices, {} indices",
-    mesh_name, vertices.size(), indices.size());
+  spdlog::info("Loaded glTF mesh '{}': {} vertices, {} indices ({} triangles)",
+    mesh_name, vertices.size(), indices.size(), indices.size() / 3);
 
   // Create mesh
   if (indices.empty())
@@ -1362,8 +1362,8 @@ GltfScene load_gltf_scene(const Device& device, const std::string& filepath)
     scene.mesh = std::make_unique<Mesh>(device, mesh_name, all_vertices, all_indices);
   }
 
-  spdlog::info("Loaded glTF scene '{}': {} vertices, {} indices, {} primitives, {} materials",
-    mesh_name, all_vertices.size(), all_indices.size(),
+  spdlog::info("Loaded glTF scene '{}': {} vertices, {} indices ({} triangles), {} primitives, {} materials",
+    mesh_name, all_vertices.size(), all_indices.size(), all_indices.size() / 3,
     scene.primitives.size(), scene.materials.size());
 
   return scene;

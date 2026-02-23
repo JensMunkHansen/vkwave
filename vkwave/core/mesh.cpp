@@ -12,17 +12,9 @@ Mesh::Mesh(const Device& device, const std::string& name, const std::vector<Vert
   , m_vertex_count(static_cast<uint32_t>(vertices.size()))
 {
   vk::DeviceSize buffer_size = sizeof(Vertex) * vertices.size();
-
-  // Create vertex buffer
-  // Using HOST_VISIBLE for simplicity. For better performance, use staging buffer
-  // to copy to DEVICE_LOCAL memory.
-  // Include ray tracing usage flags for acceleration structure building
-  m_vertex_buffer = std::make_unique<Buffer>(device, name + " vertex buffer", buffer_size,
-    vk::BufferUsageFlagBits::eVertexBuffer,
-    vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-
-  // Upload vertex data
-  m_vertex_buffer->update(vertices.data(), buffer_size);
+  m_vertex_buffer = Buffer::create_device_local(
+    device, name + " vertex buffer", vertices.data(), buffer_size,
+    vk::BufferUsageFlagBits::eVertexBuffer);
 
   spdlog::trace("Created mesh '{}' with {} vertices", name, m_vertex_count);
 }
@@ -34,16 +26,14 @@ Mesh::Mesh(const Device& device, const std::string& name, const std::vector<Vert
   , m_index_count(static_cast<uint32_t>(indices.size()))
 {
   vk::DeviceSize vertex_buffer_size = sizeof(Vertex) * vertices.size();
-  m_vertex_buffer = std::make_unique<Buffer>(device, name + " vertex buffer", vertex_buffer_size,
-    vk::BufferUsageFlagBits::eVertexBuffer,
-    vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-  m_vertex_buffer->update(vertices.data(), vertex_buffer_size);
+  m_vertex_buffer = Buffer::create_device_local(
+    device, name + " vertex buffer", vertices.data(), vertex_buffer_size,
+    vk::BufferUsageFlagBits::eVertexBuffer);
 
   vk::DeviceSize index_buffer_size = sizeof(uint32_t) * indices.size();
-  m_index_buffer = std::make_unique<Buffer>(device, name + " index buffer", index_buffer_size,
-    vk::BufferUsageFlagBits::eIndexBuffer,
-    vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-  m_index_buffer->update(indices.data(), index_buffer_size);
+  m_index_buffer = Buffer::create_device_local(
+    device, name + " index buffer", indices.data(), index_buffer_size,
+    vk::BufferUsageFlagBits::eIndexBuffer);
 
   spdlog::trace(
     "Created mesh '{}' with {} vertices, {} indices", name, m_vertex_count, m_index_count);

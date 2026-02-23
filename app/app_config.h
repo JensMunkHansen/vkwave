@@ -27,6 +27,7 @@ struct AppConfig
 
   // [scene]
   std::string model_path;                // glTF model path (empty = default cube)
+  std::vector<std::string> model_paths;  // available models for runtime switching
   std::string hdr_path;                  // initial HDR environment (empty = default neutral)
   std::vector<std::string> hdr_paths;    // all available HDR environments for runtime switching
 

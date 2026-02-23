@@ -7,6 +7,12 @@ swapchain_images = 10       # 0 = driver default (minImageCount + 1)
 
 [scene]
 model_path = "@CMAKE_SOURCE_DIR@/data/DamagedHelmet/glTF-Binary/DamagedHelmet.glb"
+model_paths = [
+    "@CMAKE_SOURCE_DIR@/data/DamagedHelmet/glTF-Binary/DamagedHelmet.glb",
+    "@CMAKE_SOURCE_DIR@/data/AlphaBlendModeTest/glTF-Binary/AlphaBlendModeTest.glb",
+    "@CMAKE_SOURCE_DIR@/data/CompareMetallic/glTF-Binary/CompareMetallic.glb",
+    "@CMAKE_SOURCE_DIR@/data/ScatteringSkull/glTF-Binary/ScatteringSkull.glb",
+]
 hdr_path = "@CMAKE_SOURCE_DIR@/data/footprint_court.hdr"
 hdr_paths = [
     "@CMAKE_SOURCE_DIR@/data/footprint_court.hdr",

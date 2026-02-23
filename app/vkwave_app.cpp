@@ -136,7 +136,7 @@ int main(int argc, char** argv)
       "Final", "Normals", "Base Color", "Metallic",
       "Roughness", "AO", "Emissive"
     };
-    ImGui::Combo("Debug Mode", &scene.pbr_pass.debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
+    ImGui::Combo("Debug Mode", &scene.pbr_ctx.debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
 
     // Tonemapping
     ImGui::Separator();
@@ -177,20 +177,50 @@ int main(int argc, char** argv)
       }
     }
 
+    // Model selection
+    if (!app.config.model_paths.empty())
+    {
+      ImGui::Separator();
+      ImGui::Text("Model");
+      auto model_label = (scene.current_model_index >= 0
+            && scene.current_model_index < static_cast<int>(app.config.model_paths.size()))
+          ? std::filesystem::path(app.config.model_paths[scene.current_model_index]).stem().string()
+          : std::string("cube");
+      if (ImGui::BeginCombo("Model", model_label.c_str()))
+      {
+        for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
+        {
+          auto label = std::filesystem::path(app.config.model_paths[i]).stem().string();
+          bool selected = (i == scene.current_model_index);
+          if (ImGui::Selectable(label.c_str(), selected))
+          {
+            if (i != scene.current_model_index)
+            {
+              scene.switch_model(app.config.model_paths[i]);
+              scene.current_model_index = i;
+            }
+          }
+          if (selected)
+            ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+    }
+
     // Light controls
     ImGui::Separator();
     ImGui::Text("Directional Light");
-    ImGui::SliderFloat3("Direction", &scene.pbr_pass.light_direction.x, -1.0f, 1.0f);
-    ImGui::SliderFloat("Intensity", &scene.pbr_pass.light_intensity, 0.0f, 10.0f);
-    ImGui::ColorEdit3("Light Color", &scene.pbr_pass.light_color.x);
+    ImGui::SliderFloat3("Direction", &scene.pbr_ctx.light_direction.x, -1.0f, 1.0f);
+    ImGui::SliderFloat("Intensity", &scene.pbr_ctx.light_intensity, 0.0f, 10.0f);
+    ImGui::ColorEdit3("Light Color", &scene.pbr_ctx.light_color.x);
 
     // Feature toggles
     ImGui::Separator();
     ImGui::Text("Features");
-    ImGui::Checkbox("Normal Mapping", &scene.pbr_pass.enable_normal_mapping);
-    ImGui::Checkbox("Emissive", &scene.pbr_pass.enable_emissive);
+    ImGui::Checkbox("Normal Mapping", &scene.pbr_ctx.enable_normal_mapping);
+    ImGui::Checkbox("Emissive", &scene.pbr_ctx.enable_emissive);
 
-    // Material overrides
+    // Material overrides (legacy single-draw path)
     ImGui::Separator();
     ImGui::Text("Material Overrides");
     ImGui::SliderFloat("Metallic", &scene.pbr_pass.metallic_factor, 0.0f, 1.0f);

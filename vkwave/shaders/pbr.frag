@@ -140,6 +140,61 @@ vec3 getIBLGGXFresnel(vec3 N, vec3 V, float roughness, vec3 F0, float specularWe
 
 void main()
 {
+  // Alpha (needed by all paths for alpha test / blend)
+  vec4 texColor = texture(baseColorTexture, fragTexCoord);
+  vec4 baseColor = texColor * pc.baseColorFactor;
+  float alpha = baseColor.a;
+  if (pc.alphaMode == 0u) alpha = 1.0;                       // opaque
+  if (pc.alphaMode == 1u && alpha < pc.alphaCutoff) discard;  // mask
+
+  // ---- Debug early-outs (skip BRDF/IBL when only visualizing a channel) ----
+
+  if (pc.debugMode == 1) {
+    // Normals
+    vec3 N;
+    if ((pc.flags & 1u) != 0u) {
+      vec3 nm = texture(normalTexture, fragTexCoord).rgb * 2.0 - 1.0;
+      N = normalize(fragTBN * nm);
+    } else {
+      N = normalize(fragNormal);
+    }
+    outColor = vec4(N * 0.5 + 0.5, alpha);
+    return;
+  }
+
+  if (pc.debugMode == 2) {
+    vec3 albedo = baseColor.rgb;
+    if (texColor.r > 0.99 && texColor.g > 0.99 && texColor.b > 0.99 &&
+        pc.baseColorFactor.r > 0.99 && pc.baseColorFactor.g > 0.99 && pc.baseColorFactor.b > 0.99)
+      albedo = fragColor;
+    outColor = vec4(albedo, alpha);
+    return;
+  }
+
+  if (pc.debugMode == 3) {
+    float metallic = clamp(texture(metallicRoughnessTexture, fragTexCoord).b * pc.metallicFactor, 0.0, 1.0);
+    outColor = vec4(vec3(metallic), alpha);
+    return;
+  }
+
+  if (pc.debugMode == 4) {
+    float roughness = clamp(texture(metallicRoughnessTexture, fragTexCoord).g * pc.roughnessFactor, 0.0, 1.0);
+    outColor = vec4(vec3(roughness), alpha);
+    return;
+  }
+
+  if (pc.debugMode == 5) {
+    outColor = vec4(vec3(texture(aoTexture, fragTexCoord).r), alpha);
+    return;
+  }
+
+  if (pc.debugMode == 6) {
+    outColor = vec4(texture(emissiveTexture, fragTexCoord).rgb, alpha);
+    return;
+  }
+
+  // ---- Full PBR path (debugMode == 0 or unknown) ----
+
   // Normal mapping (toggled by flags bit 0)
   vec3 N;
   if ((pc.flags & 1u) != 0u) {
@@ -149,16 +204,7 @@ void main()
     N = normalize(fragNormal);
   }
 
-  // Base color (sRGB texture — GPU converts to linear on sample)
-  vec4 texColor = texture(baseColorTexture, fragTexCoord);
-  vec4 baseColor = texColor * pc.baseColorFactor;
   vec3 albedo = baseColor.rgb;
-
-  // Alpha handling
-  float alpha = baseColor.a;
-  if (pc.alphaMode == 0u) alpha = 1.0;                       // opaque
-  if (pc.alphaMode == 1u && alpha < pc.alphaCutoff) discard;  // mask
-  // alphaMode 2 (blend): alpha passes through
 
   // Use vertex color when texture + factor are both default white
   if (texColor.r > 0.99 && texColor.g > 0.99 && texColor.b > 0.99 &&
@@ -173,9 +219,6 @@ void main()
 
   // AO (R channel)
   float ao = texture(aoTexture, fragTexCoord).r;
-
-  // Emissive
-  vec3 emissive = texture(emissiveTexture, fragTexCoord).rgb;
 
   // Alpha roughness (squared per glTF spec)
   float alphaRoughness = perceptualRoughness * perceptualRoughness;
@@ -239,17 +282,7 @@ void main()
 
   // Add emissive (toggled by flags bit 1)
   if ((pc.flags & 2u) != 0u)
-    color += emissive;
+    color += texture(emissiveTexture, fragTexCoord).rgb;
 
-  // Debug modes
-  switch(pc.debugMode) {
-    case 0: outColor = vec4(color, alpha); break;           // Final HDR
-    case 1: outColor = vec4(N * 0.5 + 0.5, alpha); break;  // Normals
-    case 2: outColor = vec4(albedo, alpha); break;           // Base color
-    case 3: outColor = vec4(vec3(metallic), alpha); break;   // Metallic
-    case 4: outColor = vec4(vec3(perceptualRoughness), alpha); break; // Roughness
-    case 5: outColor = vec4(vec3(ao), alpha); break;         // AO
-    case 6: outColor = vec4(emissive, alpha); break;         // Emissive
-    default: outColor = vec4(color, alpha); break;
-  }
+  outColor = vec4(color, alpha);
 }
