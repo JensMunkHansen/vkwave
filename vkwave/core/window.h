@@ -59,6 +59,8 @@ public:
 
   void set_title(const std::string& title);
 
+  [[nodiscard]] int refresh_rate() const;
+
   static void poll();
 
   bool should_close() const;

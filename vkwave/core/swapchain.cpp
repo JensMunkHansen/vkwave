@@ -347,6 +347,8 @@ void Swapchain::setup_swapchain(
 
   createInfo.oldSwapchain = old_swapchain;
 
+  m_present_mode = createInfo.presentMode;
+
   spdlog::trace("Using swapchain surface transform {}", vk::to_string(createInfo.preTransform));
 
   spdlog::trace("Creating swapchain");
@@ -408,10 +410,14 @@ void Swapchain::setup_swapchain(
 }
 
 Swapchain::Swapchain(Device& device, const VkSurfaceKHR surface, const std::uint32_t width,
-  const std::uint32_t height, const bool vsync_enabled)
+  const std::uint32_t height, const bool vsync_enabled,
+  std::optional<vk::PresentModeKHR> preferred_present_mode,
+  uint32_t preferred_image_count)
   : m_device(device)
   , m_surface(surface)
   , m_vsync_enabled(vsync_enabled)
+  , m_preferred_present_mode(preferred_present_mode)
+  , m_preferred_image_count(preferred_image_count)
 {
   setup_swapchain(width, height, vsync_enabled);
 }
@@ -427,6 +433,7 @@ Swapchain::Swapchain(Swapchain&& other) noexcept
   m_extent = other.m_extent;
   // Consider adding frame with sets of semaphores
   m_vsync_enabled = other.m_vsync_enabled;
+  m_present_mode = other.m_present_mode;
 }
 
 Swapchain::~Swapchain()

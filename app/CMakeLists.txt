@@ -1,4 +1,11 @@
-add_executable(vkwave_app main.cpp app_config.cpp)
+add_executable(vkwave_app
+  vkwave_app.cpp
+  app.cpp
+  scene.cpp
+  input.cpp
+  app_config.cpp
+  cli.cpp
+)
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   sps_link_optimization(vkwave_app)
@@ -12,6 +19,7 @@ target_link_libraries(vkwave_app
   PRIVATE
     ${GLFW_TARGET}
     toml11::toml11
+    taywee::args
 )
 
 # Generate vkwave.toml from template, then copy to each per-config output directory.

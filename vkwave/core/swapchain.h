@@ -30,6 +30,7 @@ private:
 
   vk::Extent2D m_extent{};
   vk::SwapchainKHR m_swapchain{ nullptr };
+  vk::PresentModeKHR m_present_mode{ vk::PresentModeKHR::eFifo };
 
   //  std::unique_ptr<Semaphore> m_img_available;
   [[nodiscard]] std::vector<vk::Image> get_swapchain_images();
@@ -69,7 +70,9 @@ public:
   void set_preferred_image_count(uint32_t count) { m_preferred_image_count = count; }
 
   Swapchain(Device& device, VkSurfaceKHR surface, std::uint32_t width, std::uint32_t height,
-    bool vsync_enabled);
+    bool vsync_enabled,
+    std::optional<vk::PresentModeKHR> preferred_present_mode = std::nullopt,
+    uint32_t preferred_image_count = 0);
 
   Swapchain(const Swapchain&) = delete;
   Swapchain(Swapchain&&) noexcept;
@@ -90,5 +93,6 @@ public:
   [[nodiscard]] const std::vector<vk::ImageView>& image_views() const { return m_img_views; }
   [[nodiscard]] const std::vector<vk::Image>& images() const { return m_imgs; }
   [[nodiscard]] const vk::SwapchainKHR* swapchain() const { return &m_swapchain; }
+  [[nodiscard]] vk::PresentModeKHR present_mode() const { return m_present_mode; }
 };
 };

@@ -114,6 +114,10 @@ struct PipelineSpec
   vk::Format depth_format{ vk::Format::eD32Sfloat };
   bool blend{ false };
   vk::SampleCountFlagBits msaa_samples{ vk::SampleCountFlagBits::e1 };
+
+  /// Optional: use pre-created render pass instead of auto-creating.
+  /// When set, ExecutionGroup passes it through to create_graphics_pipeline().
+  vk::RenderPass existing_renderpass{ VK_NULL_HANDLE };
 };
 
 class Pipeline

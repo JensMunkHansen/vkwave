@@ -35,9 +35,7 @@ ExecutionGroup::ExecutionGroup(
   const Device& device, const std::string& name,
   const PipelineSpec& spec, vk::Format swapchain_format,
   bool debug)
-  : m_device(device)
-  , m_name(name)
-  , m_debug(debug)
+  : SubmissionGroup(device, name, debug)
   , m_depth_enabled(spec.depth_test)
   , m_depth_format(spec.depth_format)
 {
@@ -93,20 +91,18 @@ ExecutionGroup::ExecutionGroup(
   bundle_in.reflection = &reflection;
   bundle_in.vertexBindings = spec.vertex_bindings;
   bundle_in.vertexAttributes = spec.vertex_attributes;
+  bundle_in.existingRenderPass = spec.existing_renderpass;
 
   auto bundle_out = create_graphics_pipeline(bundle_in, debug);
   m_pipeline = bundle_out.pipeline;
   m_layout = bundle_out.layout;
   m_renderpass = bundle_out.renderpass;
+  m_owns_renderpass = !spec.existing_renderpass;
   m_descriptor_layouts = std::move(bundle_out.descriptorSetLayouts);
 
   // Destroy shader modules (no longer needed after pipeline creation)
   d.destroyShaderModule(vert_mod);
   d.destroyShaderModule(frag_mod);
-
-  // Timeline semaphore
-  m_timeline = std::make_unique<TimelineSemaphore>(
-    device, fmt::format("{}_timeline", name), 0);
 
   // Default clear values
   m_clear_values.resize(m_depth_enabled ? 2 : 1);
@@ -129,15 +125,10 @@ ExecutionGroup::~ExecutionGroup()
     d.destroyPipeline(m_pipeline);
   if (m_layout)
     d.destroyPipelineLayout(m_layout);
-  if (m_renderpass)
+  if (m_renderpass && m_owns_renderpass)
     d.destroyRenderPass(m_renderpass);
   for (auto layout : m_descriptor_layouts)
     d.destroyDescriptorSetLayout(layout);
-}
-
-void ExecutionGroup::set_record_fn(RecordFn fn)
-{
-  m_record_fn = std::move(fn);
 }
 
 void ExecutionGroup::set_clear_values(std::vector<vk::ClearValue> values)
@@ -145,45 +136,60 @@ void ExecutionGroup::set_clear_values(std::vector<vk::ClearValue> values)
   m_clear_values = std::move(values);
 }
 
+void ExecutionGroup::set_color_views(std::vector<vk::ImageView> views)
+{
+  m_color_views = std::move(views);
+}
+
 void ExecutionGroup::create_frame_resources(
   const Swapchain& swapchain, uint32_t count)
 {
-  m_frames = vkwave::create_frame_resources(m_device, count);
-  m_extent = swapchain.extent();
+  // Base class creates command pools/buffers, present semaphores, timeline tracking
+  SubmissionGroup::create_frame_resources(swapchain, count);
 
+  create_frame_resources_internal(swapchain.extent(), count,
+    m_color_views.empty() ? swapchain.image_views() : m_color_views);
+}
+
+void ExecutionGroup::create_frame_resources(vk::Extent2D extent, uint32_t count)
+{
+  // For offscreen groups: create base resources without swapchain
+  SubmissionGroup::create_frame_resources_offscreen(extent, count);
+
+  create_frame_resources_internal(extent, count, m_color_views);
+}
+
+void ExecutionGroup::create_frame_resources_internal(
+  vk::Extent2D extent, uint32_t count,
+  const std::vector<vk::ImageView>& color_views)
+{
   // Create depth buffer if enabled (size-dependent, not ring-buffered)
   if (m_depth_enabled)
   {
     m_depth_buffer = std::make_unique<DepthStencilAttachment>(
-      m_device, m_depth_format, m_extent, vk::SampleCountFlagBits::e1);
+      m_device, m_depth_format, extent, vk::SampleCountFlagBits::e1);
   }
 
   // Create framebuffers
-  framebufferInput fb_input{};
-  fb_input.device = m_device.device();
-  fb_input.renderpass = m_renderpass;
-  fb_input.swapchainExtent = swapchain.extent();
-  fb_input.depthImageView = m_depth_buffer ? m_depth_buffer->combined_view() : VK_NULL_HANDLE;
+  auto depth_view = m_depth_buffer ? m_depth_buffer->combined_view() : VK_NULL_HANDLE;
 
-  auto framebuffers = make_framebuffers(fb_input, swapchain, false);
-  for (uint32_t i = 0; i < count; ++i)
-    m_frames[i].framebuffer = framebuffers[i];
-
-  // Create binary present semaphores (one per slot, for WSI)
-  m_present_semaphores.clear();
-  m_present_semaphores.reserve(count);
   for (uint32_t i = 0; i < count; ++i)
   {
-    m_present_semaphores.push_back(std::make_unique<Semaphore>(
-      m_device, fmt::format("{}_{}_present", m_name, i)));
-  }
+    std::vector<vk::ImageView> attachments;
+    attachments.push_back(color_views[i]);
+    if (depth_view)
+      attachments.push_back(depth_view);
 
-  // Initialize per-slot timeline tracking.
-  // Zero means "never submitted" — begin_frame() skips the wait, which is
-  // correct because drain() was called before any resize.
-  // Do NOT reset m_next_timeline_value: the timeline semaphore persists
-  // across resize and its counter is already beyond earlier values.
-  m_slot_timeline_values.assign(count, 0);
+    vk::FramebufferCreateInfo fb_info{};
+    fb_info.renderPass = m_renderpass;
+    fb_info.attachmentCount = static_cast<uint32_t>(attachments.size());
+    fb_info.pAttachments = attachments.data();
+    fb_info.width = extent.width;
+    fb_info.height = extent.height;
+    fb_info.layers = 1;
+
+    m_frames[i].framebuffer = m_device.device().createFramebuffer(fb_info);
+  }
 
   // Allocate ring-buffered managed buffers (specs populated from reflection in constructor)
   m_buffers.resize(m_buffer_specs.size());
@@ -209,8 +215,7 @@ void ExecutionGroup::create_frame_resources(
     {
       for (auto& b : set_info.bindings)
       {
-        if (b.blockSize > 0)
-          pool_sizes.push_back({ b.type, count });
+        pool_sizes.push_back({ b.type, count });
       }
     }
 
@@ -278,6 +283,7 @@ void ExecutionGroup::create_frame_resources(
 
 void ExecutionGroup::destroy_frame_resources()
 {
+  // Destroy ExecutionGroup-specific resources first
   if (m_descriptor_pool)
   {
     m_device.device().destroyDescriptorPool(m_descriptor_pool);
@@ -286,36 +292,62 @@ void ExecutionGroup::destroy_frame_resources()
   m_descriptor_sets.clear();
   m_buffers.clear();
   m_depth_buffer.reset();
-  vkwave::destroy_frame_resources(m_frames, m_device.device());
-  m_present_semaphores.clear();
-  m_slot_timeline_values.clear();
+
+  // Then base class destroys command pools, present semaphores, timeline tracking
+  SubmissionGroup::destroy_frame_resources();
 }
 
-void ExecutionGroup::begin_frame(uint32_t slot_index)
+void ExecutionGroup::write_image_descriptor(
+  uint32_t set, uint32_t binding,
+  vk::ImageView view, vk::Sampler sampler, vk::ImageLayout layout)
 {
-  // Wait until the GPU finishes the previous submission for this slot.
-  // Slot 0 starts with value 0 — the timeline was created at 0,
-  // so the first wait passes immediately (like a signaled fence).
-  if (m_slot_timeline_values[slot_index] > 0)
-    m_timeline->wait(m_slot_timeline_values[slot_index]);
+  assert(!m_descriptor_sets.empty() && "call after create_frame_resources()");
+
+  for (size_t i = 0; i < m_descriptor_sets.size(); ++i)
+  {
+    vk::DescriptorImageInfo image_info{};
+    image_info.sampler = sampler;
+    image_info.imageView = view;
+    image_info.imageLayout = layout;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = m_descriptor_sets[i];
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    write.pImageInfo = &image_info;
+
+    m_device.device().updateDescriptorSets(write, {});
+  }
 }
 
-void ExecutionGroup::submit(
-  uint32_t slot_index,
-  vk::Semaphore wait_acquire,
-  vk::Queue queue)
+void ExecutionGroup::write_image_descriptor(
+  uint32_t set, uint32_t binding, uint32_t slot,
+  vk::ImageView view, vk::Sampler sampler, vk::ImageLayout layout)
 {
-  auto& frame = m_frames[slot_index];
+  assert(!m_descriptor_sets.empty() && "call after create_frame_resources()");
+  assert(slot < m_descriptor_sets.size() && "slot out of range");
 
-  // Set current slot so buffer()/descriptor_set() work inside the record callback
-  m_current_slot = slot_index;
+  vk::DescriptorImageInfo image_info{};
+  image_info.sampler = sampler;
+  image_info.imageView = view;
+  image_info.imageLayout = layout;
 
-  // Reset command pool and record
-  m_device.device().resetCommandPool(frame.command_pool);
+  vk::WriteDescriptorSet write{};
+  write.dstSet = m_descriptor_sets[slot];
+  write.dstBinding = binding;
+  write.dstArrayElement = 0;
+  write.descriptorCount = 1;
+  write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+  write.pImageInfo = &image_info;
 
-  vk::CommandBufferBeginInfo begin_info{};
-  frame.command_buffer.begin(begin_info);
+  m_device.device().updateDescriptorSets(write, {});
+}
 
+void ExecutionGroup::record_commands(
+  vk::CommandBuffer cmd, uint32_t slot_index, FrameResources& frame)
+{
   // Begin render pass
   vk::RenderPassBeginInfo rp_info{};
   rp_info.renderPass = m_renderpass;
@@ -324,69 +356,12 @@ void ExecutionGroup::submit(
   rp_info.clearValueCount = static_cast<uint32_t>(m_clear_values.size());
   rp_info.pClearValues = m_clear_values.data();
 
-  frame.command_buffer.beginRenderPass(rp_info, vk::SubpassContents::eInline);
+  cmd.beginRenderPass(rp_info, vk::SubpassContents::eInline);
 
   // Record pass commands
-  m_record_fn(frame.command_buffer, slot_index);
+  m_record_fn(cmd, slot_index);
 
-  frame.command_buffer.endRenderPass();
-  frame.command_buffer.end();
-
-  // Assign the next timeline value to this submission
-  const uint64_t signal_value = m_next_timeline_value++;
-  m_slot_timeline_values[slot_index] = signal_value;
-
-  // Two wait semaphores: acquire (binary)
-  // Two signal semaphores: timeline + present (binary)
-  std::array<vk::Semaphore, 1> wait_sems = { wait_acquire };
-  std::array<vk::PipelineStageFlags, 1> wait_stages = {
-    vk::PipelineStageFlagBits::eColorAttachmentOutput
-  };
-
-  std::array<vk::Semaphore, 2> signal_sems = {
-    m_timeline->get(),
-    *m_present_semaphores[slot_index]->semaphore()
-  };
-
-  // Timeline submit info: for each wait/signal semaphore, provide a value.
-  // Binary semaphore values are ignored (use 0).
-  std::array<uint64_t, 1> wait_values = { 0 };        // binary acquire — ignored
-  std::array<uint64_t, 2> signal_values = {
-    signal_value, 0  // timeline value, binary present — ignored
-  };
-
-  vk::TimelineSemaphoreSubmitInfo timeline_info{};
-  timeline_info.waitSemaphoreValueCount = static_cast<uint32_t>(wait_values.size());
-  timeline_info.pWaitSemaphoreValues = wait_values.data();
-  timeline_info.signalSemaphoreValueCount = static_cast<uint32_t>(signal_values.size());
-  timeline_info.pSignalSemaphoreValues = signal_values.data();
-
-  vk::SubmitInfo submit{};
-  submit.pNext = &timeline_info;
-  submit.waitSemaphoreCount = static_cast<uint32_t>(wait_sems.size());
-  submit.pWaitSemaphores = wait_sems.data();
-  submit.pWaitDstStageMask = wait_stages.data();
-  submit.commandBufferCount = 1;
-  submit.pCommandBuffers = &frame.command_buffer;
-  submit.signalSemaphoreCount = static_cast<uint32_t>(signal_sems.size());
-  submit.pSignalSemaphores = signal_sems.data();
-
-  // No fence — timeline semaphore handles CPU-GPU sync
-  queue.submit(submit, nullptr);
-}
-
-void ExecutionGroup::drain()
-{
-  if (m_next_timeline_value <= 1)
-    return; // nothing submitted yet
-
-  // Single wait for the highest submitted value drains all slots
-  m_timeline->wait(m_next_timeline_value - 1);
-}
-
-const vk::Semaphore* ExecutionGroup::present_semaphore(uint32_t slot) const
-{
-  return m_present_semaphores[slot]->semaphore();
+  cmd.endRenderPass();
 }
 
 Buffer& ExecutionGroup::buffer(BufferHandle handle)

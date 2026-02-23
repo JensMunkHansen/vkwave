@@ -72,6 +72,9 @@ else()
   message(FATAL_ERROR "SPIRV-Reflect not found. Run ./build_dependencies.sh first.")
 endif()
 
+# --- args (CLI parser) ---
+include(spsArgs)
+
 # --- stb (header-only) ---
 if(VKWAVE_USE_SYSTEM_STB)
   find_path(STB_INCLUDE_DIR stb_image.h PATH_SUFFIXES stb)

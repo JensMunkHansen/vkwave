@@ -120,6 +120,25 @@ One command buffer per frame prevents GPU overlap across frames. Each phase need
 ### Global Shared Mutable State
 Any mutable state shared between passes without frame indexing creates data races when passes from different frames overlap.
 
+### ImGui as a Separate Submission Group
+
+ImGui is a lightweight overlay — a few textured triangles drawn on top of the final image. Making it its own `SubmissionGroup` with a dedicated command buffer, command pool, render pass, timeline semaphore, and `vkQueueSubmit` adds massive per-frame CPU overhead for no GPU benefit:
+
+- Extra `vkQueueSubmit` (~0.1-0.3ms kernel-mode transition on NVIDIA)
+- Extra command pool reset + command buffer record
+- Extra timeline semaphore wait in next frame's `begin_frame()`
+- Extra binary semaphore pair (acquire wait + present signal)
+
+This was measured: vkwave rendering a single cube at 220 Hz while Vulkanstein3D rendering a full PBR scene with glTF models, ray tracing, SSS blur, and multiple passes at 260 Hz — on the same GPU, same present mode. A simple cube was slower than a heavy scene because the extra `vkQueueSubmit` for ImGui dominates CPU time at high frame rates.
+
+**Correct approach:** ImGui records into the last submission group's command buffer. Either as a second render pass within the same command buffer (no extra `vkQueueSubmit`), or ideally as a callback at the end of the final render pass. This is what Vulkanstein3D does — `UIStage::record()` is a single line that calls `ImGui_ImplVulkan_RenderDrawData()` into the composite pass's command buffer. Zero extra submissions, zero extra synchronization.
+
+ImGui does not need its own submission group because it never participates in cross-frame GPU overlap — it always draws to the swapchain image that's about to be presented, and it has no downstream dependents.
+
+**GPU-side cost — dependency chain extension:** The extra submit doesn't just cost CPU time. It extends the GPU-side semaphore dependency chain: Composite signal → ImGui wait → ImGui execute → ImGui signal → Present wait. With inline recording this collapses to: Composite (includes ImGui draws) signal → Present wait. The longer chain means the graphics queue stays occupied longer per frame, which delays when the acquire semaphore signals for the next frame. This shrinks the cross-frame overlap window — exactly the thing this engine exists to maximize. With async compute in the target pipeline, the graphics queue needs to be free to start Frame N+1's early passes while Frame N's compute blur is still running. An ImGui submit sitting between composite and present eats into that window.
+
+**Industry guidance confirms this:** NVIDIA documents that each `vkQueueSubmit` has "significant performance cost on CPU." The OS scheduling overhead per submission is 50-80 microseconds. The rule of thumb is fewer than 10 submits per frame, each with at least 0.5ms of GPU work — ImGui overlay triangles will never meet that threshold.
+
 ### Frame-Count-Based Animation
 Never drive animation speed from `cpu_frame()` or any frame counter. Frame rate varies with window size, GPU load, and present mode, so animations tied to frame count run at unpredictable speeds. Always use wall-clock elapsed time (`std::chrono::steady_clock`).
 
@@ -142,6 +161,10 @@ Toggle via ImGui. Dead branches are skipped by GPU predication — zero cost. Fo
 
 ## Incremental Plan
 
+### PRIORITY FIX — Merge ImGui into last submission group
+
+**Must be done before any new milestone work.** The current `ImGuiGroup` is a separate `SubmissionGroup` with its own `vkQueueSubmit`, command pool, render pass, and timeline semaphore. This adds 50-80us of CPU overhead per frame for trivial GPU work, making a single cube slower than Vulkanstein3D's full PBR scene. Fix: record ImGui draw commands into the last `ExecutionGroup`'s command buffer (as a second render pass or end-of-pass callback). Delete `ImGuiGroup` as a `SubmissionGroup` subclass. Validate: frame rate should match or exceed Vulkanstein3D on the same GPU and present mode.
+
 ### Milestone 1 — Prove the Architecture (single pass, overlapping frames)
 
 1. **Fullscreen triangle + push constant color.** One render pass writes to the swapchain. Push constant holds a color that changes each frame (e.g. cycle hue by frame number). Validates: pipeline, render pass, swapchain present.
@@ -152,7 +175,7 @@ Toggle via ImGui. Dead branches are skipped by GPU predication — zero cost. Fo
 
 4. **Window resize.** Drain all fences, recreate swapchain + size-dependent resources, resume. Validates: teardown/rebuild path.
 
-5. **ImGui overlay.** Render ImGui as the last pass in the frame. Push constant debug controls (color picker, frame counter display). Validates: multi-pass within a frame, ImGui integration.
+5. **ImGui overlay.** Record ImGui draw commands into the last submission group's command buffer — not as a separate submission group. Push constant debug controls (color picker, frame counter display). Validates: ImGui integration without extra submission overhead.
 
 ### Milestone 2 — 3D Scene (single pass, real geometry)
 

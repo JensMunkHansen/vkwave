@@ -176,6 +176,26 @@ if(BUILD_SPIRV_REFLECT)
   )
 endif()
 
+# --- args (header-only CLI parser) ---
+option(BUILD_ARGS "Build and deploy args" ON)
+sps_get_version(ARGS_VERSION "6.4.7")
+
+if(BUILD_ARGS)
+  message(STATUS "args v${ARGS_VERSION} will be built")
+  ExternalProject_Add(args
+    GIT_REPOSITORY https://github.com/Taywee/args.git
+    GIT_TAG        ${ARGS_VERSION}
+    GIT_SHALLOW    TRUE
+    CMAKE_ARGS
+      -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
+      -DARGS_BUILD_EXAMPLE=OFF
+      -DARGS_BUILD_UNITTESTS=OFF
+    LOG_BUILD     ${EP_LOG_LEVEL}
+    LOG_CONFIGURE ${EP_LOG_LEVEL}
+    LOG_INSTALL   ${EP_LOG_LEVEL}
+  )
+endif()
+
 # --- stb (header-only) ---
 option(BUILD_STB "Deploy stb headers" ON)
 

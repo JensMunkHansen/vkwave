@@ -59,7 +59,10 @@ add_library(${TARGET_NAME}
   pipeline/framebuffer.cpp
   pipeline/triangle_pass.cpp
   pipeline/cube_pass.cpp
+  pipeline/composite_pass.cpp
+  pipeline/submission_group.cpp
   pipeline/execution_group.cpp
+  pipeline/imgui_overlay.cpp
   pipeline/render_graph.cpp
   pipeline/acceleration_structure.cpp
   pipeline/raytracing_pipeline.cpp
@@ -87,6 +90,7 @@ target_link_libraries(${TARGET_NAME}
   ${SPDLOG_TARGET}
   ${GLFW_TARGET}
   Vulkan::Vulkan
+  imgui::imgui
   spirv-reflect::spirv-reflect-static
   vkwave::shaderc
   ${CMAKE_THREAD_LIBS_INIT}

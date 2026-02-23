@@ -1,4 +1,5 @@
 #include "app_config.h"
+#include "cli.h"
 
 #include <toml.hpp>
 
@@ -63,6 +64,23 @@ AppConfig load_config(const std::string& path)
   }
 
   return cfg;
+}
+
+std::optional<AppConfig> load_config_with_cli(int argc, char** argv)
+{
+  // First pass: extract --config path (and check for --help / --complete)
+  AppConfig config;
+  std::string config_path = "vkwave.toml";
+  if (!parse_cli(argc, argv, config, config_path))
+    return std::nullopt;
+
+  // Load TOML config
+  config = load_config(config_path);
+
+  // Second pass: CLI flags override config file values
+  parse_cli(argc, argv, config, config_path);
+
+  return config;
 }
 
 vkwave::Window::Mode parse_window_mode(const std::string& mode)

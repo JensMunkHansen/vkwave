@@ -23,6 +23,7 @@ struct CubePass : Pass<CubePass>
 
   // Per-frame state (set by app before render_frame)
   glm::mat4 view_projection{ 1.0f };
+  glm::mat4 model{ 1.0f };
   float time{ 0.0f };
   int debug_mode{ 0 };
 

@@ -33,7 +33,7 @@ void CubePass::record(vk::CommandBuffer cmd) const
 
   // Push constants
   CubePushConstants pc{};
-  pc.model = glm::mat4(1.0f);
+  pc.model = model;
   pc.time = time;
   pc.debugMode = debug_mode;
 

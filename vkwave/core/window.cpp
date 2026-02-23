@@ -119,6 +119,14 @@ void Window::set_title(const std::string& title)
   glfwSetWindowTitle(m_window, title.c_str());
 }
 
+int Window::refresh_rate() const
+{
+  GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+  if (!monitor) return 60;
+  const auto* mode = glfwGetVideoMode(monitor);
+  return mode ? mode->refreshRate : 60;
+}
+
 void Window::get_framebuffer_size(std::uint32_t& width, std::uint32_t& height) const
 {
   int w, h;

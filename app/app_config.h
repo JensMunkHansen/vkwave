@@ -29,5 +29,10 @@ struct AppConfig
 };
 
 AppConfig load_config(const std::string& path);
+
+/// Load config from TOML, then apply CLI overrides.
+/// Returns nullopt if the program should exit (help/completion was printed).
+std::optional<AppConfig> load_config_with_cli(int argc, char** argv);
+
 vkwave::Window::Mode parse_window_mode(const std::string& mode);
 std::optional<vk::PresentModeKHR> parse_present_mode(const std::string& mode);
