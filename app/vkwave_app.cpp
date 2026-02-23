@@ -12,6 +12,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 
 // ---------------------------------------------------------------------------
 // GLFW callback context — shared user pointer for all callbacks
@@ -136,8 +137,44 @@ int main(int argc, char** argv)
     };
     ImGui::Combo("Debug Mode", &scene.pbr_pass.debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
 
+    // Tonemapping
     ImGui::Separator();
+    const char* tonemap_modes[] = {
+      "None", "Reinhard", "ACES (Fast)", "ACES (Hill)",
+      "ACES + Boost", "Khronos PBR Neutral"
+    };
+    ImGui::Combo("Tonemap", &scene.composite_pass.tonemap_mode, tonemap_modes, IM_ARRAYSIZE(tonemap_modes));
     ImGui::SliderFloat("Exposure", &scene.composite_pass.exposure, 0.1f, 5.0f);
+
+    // IBL environment
+    if (!app.config.hdr_paths.empty())
+    {
+      ImGui::Separator();
+      ImGui::Text("Environment");
+      auto current_label = (scene.current_hdr_index >= 0
+            && scene.current_hdr_index < static_cast<int>(app.config.hdr_paths.size()))
+          ? std::filesystem::path(app.config.hdr_paths[scene.current_hdr_index]).stem().string()
+          : std::string("neutral");
+      if (ImGui::BeginCombo("HDR", current_label.c_str()))
+      {
+        for (int i = 0; i < static_cast<int>(app.config.hdr_paths.size()); ++i)
+        {
+          auto label = std::filesystem::path(app.config.hdr_paths[i]).stem().string();
+          bool selected = (i == scene.current_hdr_index);
+          if (ImGui::Selectable(label.c_str(), selected))
+          {
+            if (i != scene.current_hdr_index)
+            {
+              scene.switch_ibl(app.config.hdr_paths[i]);
+              scene.current_hdr_index = i;
+            }
+          }
+          if (selected)
+            ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+    }
 
     // Light controls
     ImGui::Separator();

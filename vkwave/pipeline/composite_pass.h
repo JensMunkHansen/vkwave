@@ -18,7 +18,7 @@ struct CompositePass : Pass<CompositePass>
 {
   ExecutionGroup* group{ nullptr };
   float exposure{ 1.0f };
-  int debug_mode{ 0 };
+  int tonemap_mode{ 0 };
 
   /// Returns the PipelineSpec (fullscreen.vert + composite.frag, no vertex input, no depth).
   /// The caller must set existing_renderpass on the returned spec before passing to add_group().

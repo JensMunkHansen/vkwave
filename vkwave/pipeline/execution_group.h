@@ -115,14 +115,28 @@ public:
 
   void destroy_frame_resources() override;
 
-  /// Write a combined image sampler descriptor to all N slots.
+  /// Look up a descriptor binding index by GLSL variable name.
+  /// Throws if the name is not found in the reflected set.
+  [[nodiscard]] uint32_t binding_index(uint32_t set, const std::string& name) const;
+
+  /// Write a combined image sampler descriptor to all N slots (by binding index).
   /// Call after create_frame_resources().
   void write_image_descriptor(uint32_t set, uint32_t binding,
                               vk::ImageView view, vk::Sampler sampler,
                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
-  /// Write a combined image sampler descriptor to a single slot.
+  /// Write a combined image sampler descriptor to a single slot (by binding index).
   void write_image_descriptor(uint32_t set, uint32_t binding, uint32_t slot,
+                              vk::ImageView view, vk::Sampler sampler,
+                              vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+  /// Write a combined image sampler descriptor to all N slots (by GLSL name).
+  void write_image_descriptor(uint32_t set, const std::string& name,
+                              vk::ImageView view, vk::Sampler sampler,
+                              vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
+
+  /// Write a combined image sampler descriptor to a single slot (by GLSL name).
+  void write_image_descriptor(uint32_t set, const std::string& name, uint32_t slot,
                               vk::ImageView view, vk::Sampler sampler,
                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
 

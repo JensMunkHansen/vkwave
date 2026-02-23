@@ -8,6 +8,7 @@ swapchain_images = 10       # 0 = driver default (minImageCount + 1)
 [scene]
 model_path = ""             # glTF model (.gltf/.glb), "" = default cube
 hdr_path = ""               # HDR environment map, "" = default neutral IBL
+hdr_paths = []              # available HDR environments for runtime switching
 
 [window]
 title = "vkwave"

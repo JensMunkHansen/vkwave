@@ -8,6 +8,14 @@ swapchain_images = 10       # 0 = driver default (minImageCount + 1)
 [scene]
 model_path = "@CMAKE_SOURCE_DIR@/data/DamagedHelmet/glTF-Binary/DamagedHelmet.glb"
 hdr_path = "@CMAKE_SOURCE_DIR@/data/footprint_court.hdr"
+hdr_paths = [
+    "@CMAKE_SOURCE_DIR@/data/footprint_court.hdr",
+    "@CMAKE_SOURCE_DIR@/data/neutral.hdr",
+    "@CMAKE_SOURCE_DIR@/data/hospital_room.hdr",
+    "@CMAKE_SOURCE_DIR@/data/hospital_room_2.hdr",
+    "@CMAKE_SOURCE_DIR@/data/surgery.hdr",
+    "@CMAKE_SOURCE_DIR@/data/childrens_hospital.hdr",
+]
 
 [window]
 title = "vkwave"

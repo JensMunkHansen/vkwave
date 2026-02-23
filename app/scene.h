@@ -13,6 +13,7 @@
 #include <vulkan/vulkan.hpp>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 struct App;
@@ -57,6 +58,13 @@ struct Scene
 
   /// Update per-frame pass state (aspect ratio, model matrix, time).
   void update(vkwave::RenderGraph& graph);
+
+  /// Switch to a different HDR environment. Drains GPU, creates new IBL,
+  /// rewrites descriptors. Empty path = default neutral IBL.
+  void switch_ibl(const std::string& hdr_path);
+
+  /// Index into config.hdr_paths for the currently loaded IBL (-1 = neutral).
+  int current_hdr_index{ 0 };
 
 private:
   App* m_app;

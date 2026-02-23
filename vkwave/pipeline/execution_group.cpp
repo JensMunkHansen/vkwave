@@ -345,6 +345,35 @@ void ExecutionGroup::write_image_descriptor(
   m_device.device().updateDescriptorSets(write, {});
 }
 
+uint32_t ExecutionGroup::binding_index(uint32_t set, const std::string& name) const
+{
+  for (auto& set_info : m_reflected_sets)
+  {
+    if (set_info.set != set) continue;
+    for (auto& b : set_info.bindings)
+    {
+      if (b.name == name)
+        return b.binding;
+    }
+  }
+  throw std::runtime_error(
+    "Descriptor binding '" + name + "' not found in set " + std::to_string(set));
+}
+
+void ExecutionGroup::write_image_descriptor(
+  uint32_t set, const std::string& name,
+  vk::ImageView view, vk::Sampler sampler, vk::ImageLayout layout)
+{
+  write_image_descriptor(set, binding_index(set, name), view, sampler, layout);
+}
+
+void ExecutionGroup::write_image_descriptor(
+  uint32_t set, const std::string& name, uint32_t slot,
+  vk::ImageView view, vk::Sampler sampler, vk::ImageLayout layout)
+{
+  write_image_descriptor(set, binding_index(set, name), slot, view, sampler, layout);
+}
+
 void ExecutionGroup::record_commands(
   vk::CommandBuffer cmd, uint32_t slot_index, FrameResources& frame)
 {

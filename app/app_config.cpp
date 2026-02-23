@@ -53,6 +53,11 @@ AppConfig load_config(const std::string& path)
       auto& scene = toml::find(data, "scene");
       cfg.model_path = toml::find_or(scene, "model_path", std::string{});
       cfg.hdr_path = toml::find_or(scene, "hdr_path", std::string{});
+      if (scene.contains("hdr_paths"))
+      {
+        auto arr = toml::find<std::vector<std::string>>(scene, "hdr_paths");
+        cfg.hdr_paths = std::move(arr);
+      }
     }
 
     // [debug]

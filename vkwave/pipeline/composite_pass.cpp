@@ -39,7 +39,7 @@ void CompositePass::record(vk::CommandBuffer cmd) const
   cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
     0, 1, &ds, 0, nullptr);
 
-  struct { float exposure; int debugMode; } pc{ exposure, debug_mode };
+  struct { float exposure; int tonemapMode; } pc{ exposure, tonemap_mode };
   cmd.pushConstants(layout,
     vk::ShaderStageFlagBits::eFragment,
     0, sizeof(pc), &pc);

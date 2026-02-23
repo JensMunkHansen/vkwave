@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 struct AppConfig
 {
@@ -25,8 +26,9 @@ struct AppConfig
   bool use_x11{ false };
 
   // [scene]
-  std::string model_path;   // glTF model path (empty = default cube)
-  std::string hdr_path;     // HDR environment map path (empty = default neutral)
+  std::string model_path;                // glTF model path (empty = default cube)
+  std::string hdr_path;                  // initial HDR environment (empty = default neutral)
+  std::vector<std::string> hdr_paths;    // all available HDR environments for runtime switching
 
   // [debug]
   uint64_t max_frames{ 0 };  // 0 = unlimited, >0 = exit after N frames

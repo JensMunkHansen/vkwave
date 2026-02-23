@@ -4,6 +4,7 @@
 
 #include <shaderc/shaderc.hpp>
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -47,6 +48,59 @@ static shaderc_shader_kind to_shaderc_kind(vk::ShaderStageFlagBits stage)
   }
 }
 
+/// Resolve #include directives relative to the including file's directory.
+class FileIncluder : public shaderc::CompileOptions::IncluderInterface
+{
+public:
+  explicit FileIncluder(std::string base_dir)
+    : m_base_dir(std::move(base_dir)) {}
+
+  shaderc_include_result* GetInclude(
+    const char* requested_source,
+    shaderc_include_type /*type*/,
+    const char* /*requesting_source*/,
+    size_t /*include_depth*/) override
+  {
+    auto path = std::filesystem::path(m_base_dir) / requested_source;
+    auto* result = new shaderc_include_result;
+
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+      m_error = "Failed to open include: " + path.string();
+      result->source_name = "";
+      result->source_name_length = 0;
+      result->content = m_error.c_str();
+      result->content_length = m_error.size();
+      result->user_data = nullptr;
+      return result;
+    }
+
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    m_content = ss.str();
+    m_name = path.string();
+
+    result->source_name = m_name.c_str();
+    result->source_name_length = m_name.size();
+    result->content = m_content.c_str();
+    result->content_length = m_content.size();
+    result->user_data = nullptr;
+    return result;
+  }
+
+  void ReleaseInclude(shaderc_include_result* data) override
+  {
+    delete data;
+  }
+
+private:
+  std::string m_base_dir;
+  std::string m_content;
+  std::string m_name;
+  std::string m_error;
+};
+
 ShaderCompiler::Result ShaderCompiler::compile(
   const std::string& filepath, vk::ShaderStageFlagBits stage)
 {
@@ -64,6 +118,10 @@ ShaderCompiler::Result ShaderCompiler::compile(
   shaderc::CompileOptions options;
   options.SetTargetEnvironment(shaderc_target_env_vulkan, to_shaderc_env());
   options.SetTargetSpirv(to_shaderc_spirv());
+
+  // Enable #include resolution relative to the shader's directory
+  auto shader_dir = std::filesystem::path(filepath).parent_path().string();
+  options.SetIncluder(std::make_unique<FileIncluder>(shader_dir));
 
 #ifdef NDEBUG
   options.SetOptimizationLevel(shaderc_optimization_level_performance);

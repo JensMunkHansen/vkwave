@@ -73,7 +73,7 @@ foreach(_model IN LISTS _GLB_MODELS)
   fetch_gltf_model_glb(${_model})
 endforeach()
 
-# HDR environments
+# HDR environments (Khronos glTF-Sample-Environments)
 set(_HDR_ENVIRONMENTS
   neutral
   footprint_court
@@ -82,3 +82,22 @@ set(_HDR_ENVIRONMENTS
 foreach(_env IN LISTS _HDR_ENVIRONMENTS)
   fetch_hdr_environment(${_env})
 endforeach()
+
+# ---------------------------------------------------------------------------
+# Download an HDR environment from Poly Haven (CC0 licensed)
+# Uses 1k resolution — sufficient for IBL cubemap generation
+# ---------------------------------------------------------------------------
+set(_POLYHAVEN_HDR_BASE "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k")
+
+function(fetch_polyhaven_hdr name)
+  _download_asset(
+    "${_POLYHAVEN_HDR_BASE}/${name}_1k.hdr"
+    "${_DATA_DIR}/${name}.hdr"
+  )
+endfunction()
+
+# Poly Haven HDR environments (CC0 licensed)
+fetch_polyhaven_hdr(hospital_room)
+fetch_polyhaven_hdr(hospital_room_2)
+fetch_polyhaven_hdr(surgery)
+fetch_polyhaven_hdr(childrens_hospital)

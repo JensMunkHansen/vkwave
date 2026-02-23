@@ -108,6 +108,7 @@ void ShaderReflection::add_stage(
         info.count = b->count;
         info.stageFlags = stage;
         info.blockSize = (b->block.size > 0) ? b->block.size : 0;
+        info.name = b->name ? b->name : "";
         it->bindings.push_back(info);
       }
     }

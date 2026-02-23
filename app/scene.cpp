@@ -91,28 +91,28 @@ void Scene::write_pbr_descriptors(vkwave::ExecutionGroup& group)
     return tex ? *tex : *fallback;
   };
 
-  // Material textures (bindings 1-5)
+  // Material textures (resolved by GLSL variable name via reflection)
   auto& base = tex_or(gltf_model.baseColorTexture, fallback_white);
-  group.write_image_descriptor(0, 1, base.image_view(), base.sampler());
+  group.write_image_descriptor(0, "baseColorTexture", base.image_view(), base.sampler());
 
   auto& norm = tex_or(gltf_model.normalTexture, fallback_normal);
-  group.write_image_descriptor(0, 2, norm.image_view(), norm.sampler());
+  group.write_image_descriptor(0, "normalTexture", norm.image_view(), norm.sampler());
 
   auto& mr = tex_or(gltf_model.metallicRoughnessTexture, fallback_mr);
-  group.write_image_descriptor(0, 3, mr.image_view(), mr.sampler());
+  group.write_image_descriptor(0, "metallicRoughnessTexture", mr.image_view(), mr.sampler());
 
   auto& emis = tex_or(gltf_model.emissiveTexture, fallback_black);
-  group.write_image_descriptor(0, 4, emis.image_view(), emis.sampler());
+  group.write_image_descriptor(0, "emissiveTexture", emis.image_view(), emis.sampler());
 
   auto& ao = tex_or(gltf_model.aoTexture, fallback_white);
-  group.write_image_descriptor(0, 5, ao.image_view(), ao.sampler());
+  group.write_image_descriptor(0, "aoTexture", ao.image_view(), ao.sampler());
 
-  // IBL textures (bindings 6-8)
-  group.write_image_descriptor(0, 6,
+  // IBL textures
+  group.write_image_descriptor(0, "brdfLUT",
     ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
-  group.write_image_descriptor(0, 7,
+  group.write_image_descriptor(0, "irradianceMap",
     ibl->irradiance_view(), ibl->irradiance_sampler());
-  group.write_image_descriptor(0, 8,
+  group.write_image_descriptor(0, "prefilterMap",
     ibl->prefiltered_view(), ibl->prefiltered_sampler());
 }
 
@@ -167,6 +167,19 @@ Scene::Scene(App& app)
     ibl = std::make_unique<vkwave::IBL>(app.device);
   }
 
+  // Determine which hdr_paths index matches the initial hdr_path
+  current_hdr_index = -1;
+  for (int i = 0; i < static_cast<int>(app.config.hdr_paths.size()); ++i)
+  {
+    if (app.config.hdr_paths[i] == app.config.hdr_path)
+    {
+      current_hdr_index = i;
+      break;
+    }
+  }
+  if (current_hdr_index < 0 && !app.config.hdr_paths.empty())
+    current_hdr_index = 0;
+
   // Create fallback textures for missing material slots
   create_fallback_textures();
 
@@ -219,7 +232,7 @@ Scene::Scene(App& app)
     // descriptor set is safe to update.
     auto slot = m_app->graph.last_offscreen_slot();
     auto& cg = static_cast<vkwave::ExecutionGroup&>(m_app->graph.present_group());
-    cg.write_image_descriptor(0, 0, frame_index,
+    cg.write_image_descriptor(0, "hdrImage", frame_index,
       hdr_images[slot].image_view(), hdr_sampler);
     composite_pass.record(cmd);
   });
@@ -262,7 +275,7 @@ Scene::Scene(App& app)
   write_pbr_descriptors(pbr_group);
 
   // Write HDR image descriptor to composite pass
-  comp_group.write_image_descriptor(0, 0, hdr_images[0].image_view(), hdr_sampler);
+  comp_group.write_image_descriptor(0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
 
   // Overlay framebuffers reference swapchain image views -- create after build
   imgui->create_frame_resources(app.swapchain, app.swapchain.image_count());
@@ -284,6 +297,31 @@ Scene::~Scene()
     dev.destroyRenderPass(composite_renderpass);
 }
 
+void Scene::switch_ibl(const std::string& hdr_path)
+{
+  // Drain GPU — in-flight descriptor sets still reference old IBL views
+  m_app->graph.drain();
+
+  // Create new IBL (old one destroyed by unique_ptr reassignment)
+  if (hdr_path.empty() || !std::filesystem::exists(hdr_path))
+  {
+    if (!hdr_path.empty())
+      spdlog::warn("HDR file not found: {} -- using neutral IBL", hdr_path);
+    ibl = std::make_unique<vkwave::IBL>(m_app->device);
+  }
+  else
+  {
+    spdlog::info("Switching IBL to: {}", hdr_path);
+    ibl = std::make_unique<vkwave::IBL>(m_app->device, hdr_path);
+  }
+
+  // Rewrite IBL descriptors
+  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
+  pbr_group.write_image_descriptor(0, "brdfLUT", ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
+  pbr_group.write_image_descriptor(0, "irradianceMap", ibl->irradiance_view(), ibl->irradiance_sampler());
+  pbr_group.write_image_descriptor(0, "prefilterMap", ibl->prefiltered_view(), ibl->prefiltered_sampler());
+}
+
 void Scene::resize(const vkwave::Swapchain& swapchain)
 {
   if (imgui)
@@ -294,7 +332,7 @@ void Scene::resize(const vkwave::Swapchain& swapchain)
 
   // Update composite pass's HDR image descriptor after resize rebuilt everything
   auto& comp_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.present_group());
-  comp_group.write_image_descriptor(0, 0, hdr_images[0].image_view(), hdr_sampler);
+  comp_group.write_image_descriptor(0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
 
   // Re-write PBR texture descriptors (descriptor sets were recreated)
   auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));

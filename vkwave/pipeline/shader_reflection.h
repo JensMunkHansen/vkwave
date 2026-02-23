@@ -19,6 +19,7 @@ struct DescriptorBindingInfo
   uint32_t count;
   vk::ShaderStageFlags stageFlags;
   uint32_t blockSize; // for UBOs/SSBOs, 0 otherwise
+  std::string name;   // GLSL variable name (from SPIR-V reflection)
 };
 
 /// Information about a descriptor set (all its bindings).
