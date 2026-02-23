@@ -8,6 +8,7 @@
 // - https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
 // - https://github.com/KhronosGroup/glTF-Sample-Viewer
 
+// Set 0: Per-frame (ring-buffered per swapchain image)
 layout(set = 0, binding = 0) uniform PbrUBO {
   mat4 viewProj;
   vec4 camPos;
@@ -15,17 +16,17 @@ layout(set = 0, binding = 0) uniform PbrUBO {
   vec4 lightColor;      // rgb=color, a=unused
 } ubo;
 
-// Material textures
-layout(set = 0, binding = 1) uniform sampler2D baseColorTexture;
-layout(set = 0, binding = 2) uniform sampler2D normalTexture;
-layout(set = 0, binding = 3) uniform sampler2D metallicRoughnessTexture;  // G=roughness, B=metallic
-layout(set = 0, binding = 4) uniform sampler2D emissiveTexture;
-layout(set = 0, binding = 5) uniform sampler2D aoTexture;                 // R=AO
+// Set 1: Per-material textures (bound once per material change)
+layout(set = 1, binding = 0) uniform sampler2D baseColorTexture;
+layout(set = 1, binding = 1) uniform sampler2D normalTexture;
+layout(set = 1, binding = 2) uniform sampler2D metallicRoughnessTexture;  // G=roughness, B=metallic
+layout(set = 1, binding = 3) uniform sampler2D emissiveTexture;
+layout(set = 1, binding = 4) uniform sampler2D aoTexture;                 // R=AO
 
-// IBL textures
-layout(set = 0, binding = 6) uniform sampler2D brdfLUT;
-layout(set = 0, binding = 7) uniform samplerCube irradianceMap;
-layout(set = 0, binding = 8) uniform samplerCube prefilterMap;
+// Set 2: Per-scene globals (bound once per frame)
+layout(set = 2, binding = 0) uniform sampler2D brdfLUT;
+layout(set = 2, binding = 1) uniform samplerCube irradianceMap;
+layout(set = 2, binding = 2) uniform samplerCube prefilterMap;
 
 layout(push_constant) uniform PushConstants {
   mat4 model;
@@ -34,6 +35,9 @@ layout(push_constant) uniform PushConstants {
   float roughnessFactor;
   float time;
   int debugMode;
+  uint flags;
+  uint alphaMode;
+  float alphaCutoff;
 } pc;
 
 layout(location = 0) in vec3 fragColor;
@@ -136,15 +140,25 @@ vec3 getIBLGGXFresnel(vec3 N, vec3 V, float roughness, vec3 F0, float specularWe
 
 void main()
 {
-  // Normal mapping: sample and transform via TBN
-  vec3 normalMap = texture(normalTexture, fragTexCoord).rgb;
-  normalMap = normalMap * 2.0 - 1.0;
-  vec3 N = normalize(fragTBN * normalMap);
+  // Normal mapping (toggled by flags bit 0)
+  vec3 N;
+  if ((pc.flags & 1u) != 0u) {
+    vec3 nm = texture(normalTexture, fragTexCoord).rgb * 2.0 - 1.0;
+    N = normalize(fragTBN * nm);
+  } else {
+    N = normalize(fragNormal);
+  }
 
   // Base color (sRGB texture — GPU converts to linear on sample)
   vec4 texColor = texture(baseColorTexture, fragTexCoord);
   vec4 baseColor = texColor * pc.baseColorFactor;
   vec3 albedo = baseColor.rgb;
+
+  // Alpha handling
+  float alpha = baseColor.a;
+  if (pc.alphaMode == 0u) alpha = 1.0;                       // opaque
+  if (pc.alphaMode == 1u && alpha < pc.alphaCutoff) discard;  // mask
+  // alphaMode 2 (blend): alpha passes through
 
   // Use vertex color when texture + factor are both default white
   if (texColor.r > 0.99 && texColor.g > 0.99 && texColor.b > 0.99 &&
@@ -223,18 +237,19 @@ void main()
   // Apply AO
   color *= ao;
 
-  // Add emissive (before tonemapping for HDR glow)
-  color += emissive;
+  // Add emissive (toggled by flags bit 1)
+  if ((pc.flags & 2u) != 0u)
+    color += emissive;
 
   // Debug modes
   switch(pc.debugMode) {
-    case 0: outColor = vec4(color, 1.0); break;           // Final HDR
-    case 1: outColor = vec4(N * 0.5 + 0.5, 1.0); break;  // Normals
-    case 2: outColor = vec4(albedo, 1.0); break;           // Base color
-    case 3: outColor = vec4(vec3(metallic), 1.0); break;   // Metallic
-    case 4: outColor = vec4(vec3(perceptualRoughness), 1.0); break; // Roughness
-    case 5: outColor = vec4(vec3(ao), 1.0); break;         // AO
-    case 6: outColor = vec4(emissive, 1.0); break;         // Emissive
-    default: outColor = vec4(color, 1.0); break;
+    case 0: outColor = vec4(color, alpha); break;           // Final HDR
+    case 1: outColor = vec4(N * 0.5 + 0.5, alpha); break;  // Normals
+    case 2: outColor = vec4(albedo, alpha); break;           // Base color
+    case 3: outColor = vec4(vec3(metallic), alpha); break;   // Metallic
+    case 4: outColor = vec4(vec3(perceptualRoughness), alpha); break; // Roughness
+    case 5: outColor = vec4(vec3(ao), alpha); break;         // AO
+    case 6: outColor = vec4(emissive, alpha); break;         // Emissive
+    default: outColor = vec4(color, alpha); break;
   }
 }

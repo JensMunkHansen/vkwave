@@ -25,7 +25,8 @@ struct Scene
   vkwave::Camera camera;
 
   // PBR model + environment
-  vkwave::GltfModel gltf_model;
+  vkwave::GltfScene gltf_scene;
+  vkwave::GltfModel gltf_model;             // legacy single-material fallback
   std::unique_ptr<vkwave::Mesh> cube_mesh;  // fallback when no model_path
   std::unique_ptr<vkwave::IBL> ibl;
 

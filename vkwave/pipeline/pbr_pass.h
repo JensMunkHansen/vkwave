@@ -10,6 +10,8 @@ namespace vkwave
 {
 
 class ExecutionGroup;
+struct ScenePrimitive;
+struct SceneMaterial;
 
 /// PBR pass: Cook-Torrance BRDF with normal mapping and IBL.
 ///
@@ -33,10 +35,20 @@ struct PBRPass : Pass<PBRPass>
   float time{ 0.0f };
   int debug_mode{ 0 };
 
+  // Feature toggles
+  bool enable_normal_mapping{ true };
+  bool enable_emissive{ true };
+
   // Light (directional)
   glm::vec3 light_direction{ 1.0f, 1.0f, 1.0f };
   float light_intensity{ 3.0f };
   glm::vec3 light_color{ 1.0f };
+
+  // Per-primitive scene data (null = single-draw legacy path)
+  const ScenePrimitive* primitives{ nullptr };
+  const SceneMaterial* materials{ nullptr };
+  uint32_t primitive_count{ 0 };
+  uint32_t material_count{ 0 };
 
   /// Returns the PipelineSpec for this pass (shader paths, vertex layout, etc.).
   static PipelineSpec pipeline_spec();

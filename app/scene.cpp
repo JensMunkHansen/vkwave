@@ -91,28 +91,41 @@ void Scene::write_pbr_descriptors(vkwave::ExecutionGroup& group)
     return tex ? *tex : *fallback;
   };
 
-  // Material textures (resolved by GLSL variable name via reflection)
-  auto& base = tex_or(gltf_model.baseColorTexture, fallback_white);
-  group.write_image_descriptor(0, "baseColorTexture", base.image_view(), base.sampler());
+  const bool use_scene = !gltf_scene.materials.empty();
+  const uint32_t mat_count = use_scene
+    ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
 
-  auto& norm = tex_or(gltf_model.normalTexture, fallback_normal);
-  group.write_image_descriptor(0, "normalTexture", norm.image_view(), norm.sampler());
+  // Set 1: per-material textures (one descriptor set per material)
+  for (uint32_t m = 0; m < mat_count; ++m)
+  {
+    auto& mat_base  = use_scene ? gltf_scene.materials[m].baseColorTexture         : gltf_model.baseColorTexture;
+    auto& mat_norm  = use_scene ? gltf_scene.materials[m].normalTexture            : gltf_model.normalTexture;
+    auto& mat_mr    = use_scene ? gltf_scene.materials[m].metallicRoughnessTexture : gltf_model.metallicRoughnessTexture;
+    auto& mat_emis  = use_scene ? gltf_scene.materials[m].emissiveTexture          : gltf_model.emissiveTexture;
+    auto& mat_ao    = use_scene ? gltf_scene.materials[m].aoTexture                : gltf_model.aoTexture;
 
-  auto& mr = tex_or(gltf_model.metallicRoughnessTexture, fallback_mr);
-  group.write_image_descriptor(0, "metallicRoughnessTexture", mr.image_view(), mr.sampler());
+    auto& base = tex_or(mat_base, fallback_white);
+    group.write_image_descriptor(1, "baseColorTexture", m, base.image_view(), base.sampler());
 
-  auto& emis = tex_or(gltf_model.emissiveTexture, fallback_black);
-  group.write_image_descriptor(0, "emissiveTexture", emis.image_view(), emis.sampler());
+    auto& norm = tex_or(mat_norm, fallback_normal);
+    group.write_image_descriptor(1, "normalTexture", m, norm.image_view(), norm.sampler());
 
-  auto& ao = tex_or(gltf_model.aoTexture, fallback_white);
-  group.write_image_descriptor(0, "aoTexture", ao.image_view(), ao.sampler());
+    auto& mr = tex_or(mat_mr, fallback_mr);
+    group.write_image_descriptor(1, "metallicRoughnessTexture", m, mr.image_view(), mr.sampler());
 
-  // IBL textures
-  group.write_image_descriptor(0, "brdfLUT",
+    auto& emis = tex_or(mat_emis, fallback_black);
+    group.write_image_descriptor(1, "emissiveTexture", m, emis.image_view(), emis.sampler());
+
+    auto& ao = tex_or(mat_ao, fallback_white);
+    group.write_image_descriptor(1, "aoTexture", m, ao.image_view(), ao.sampler());
+  }
+
+  // Set 2: per-scene IBL textures (single descriptor set)
+  group.write_image_descriptor(2, "brdfLUT",
     ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
-  group.write_image_descriptor(0, "irradianceMap",
+  group.write_image_descriptor(2, "irradianceMap",
     ibl->irradiance_view(), ibl->irradiance_sampler());
-  group.write_image_descriptor(0, "prefilterMap",
+  group.write_image_descriptor(2, "prefilterMap",
     ibl->prefiltered_view(), ibl->prefiltered_sampler());
 }
 
@@ -132,20 +145,25 @@ Scene::Scene(App& app)
     }
     else
     {
-      spdlog::info("Loading glTF model: {}", app.config.model_path);
-      gltf_model = vkwave::load_gltf_model(app.device, app.config.model_path);
+      spdlog::info("Loading glTF scene: {}", app.config.model_path);
+      gltf_scene = vkwave::load_gltf_scene(app.device, app.config.model_path);
+      if (!gltf_scene.mesh)
+      {
+        spdlog::warn("Scene load returned no mesh, falling back to single-material loader");
+        gltf_model = vkwave::load_gltf_model(app.device, app.config.model_path);
+      }
     }
   }
 
-  if (!gltf_model.mesh)
+  if (!gltf_scene.mesh && !gltf_model.mesh)
   {
     spdlog::info("Using default cube mesh");
     cube_mesh = vkwave::Mesh::create_cube(app.device);
   }
 
-  const vkwave::Mesh* active_mesh = gltf_model.mesh
-    ? gltf_model.mesh.get()
-    : cube_mesh.get();
+  const vkwave::Mesh* active_mesh = gltf_scene.mesh
+    ? gltf_scene.mesh.get()
+    : (gltf_model.mesh ? gltf_model.mesh.get() : cube_mesh.get());
 
   // Create IBL resources
   if (!app.config.hdr_path.empty())
@@ -215,6 +233,13 @@ Scene::Scene(App& app)
   pbr_group.set_color_views(hdr_views);
   pbr_pass.group = &pbr_group;
   pbr_pass.mesh = active_mesh;
+  if (gltf_scene.mesh && !gltf_scene.primitives.empty())
+  {
+    pbr_pass.primitives = gltf_scene.primitives.data();
+    pbr_pass.primitive_count = static_cast<uint32_t>(gltf_scene.primitives.size());
+    pbr_pass.materials = gltf_scene.materials.data();
+    pbr_pass.material_count = static_cast<uint32_t>(gltf_scene.materials.size());
+  }
   pbr_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
     pbr_pass.record(cmd);
   });
@@ -268,6 +293,17 @@ Scene::Scene(App& app)
     cg.set_color_views(views);
   });
 
+  // Descriptor set frequency layout:
+  //   Set 0: per-frame UBO (ring-buffered, count = swapchain images) — default
+  //   Set 1: per-material textures (count = number of materials)
+  //   Set 2: per-scene IBL (count = 1)
+  {
+    uint32_t mat_count = gltf_scene.mesh && !gltf_scene.materials.empty()
+      ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
+    pbr_group.set_descriptor_count(1, mat_count);
+    pbr_group.set_descriptor_count(2, 1);
+  }
+
   // Build all frame resources
   app.graph.build(app.swapchain);
 
@@ -315,11 +351,11 @@ void Scene::switch_ibl(const std::string& hdr_path)
     ibl = std::make_unique<vkwave::IBL>(m_app->device, hdr_path);
   }
 
-  // Rewrite IBL descriptors
+  // Rewrite IBL descriptors (set 2: per-scene globals)
   auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_app->graph.offscreen_group(0));
-  pbr_group.write_image_descriptor(0, "brdfLUT", ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
-  pbr_group.write_image_descriptor(0, "irradianceMap", ibl->irradiance_view(), ibl->irradiance_sampler());
-  pbr_group.write_image_descriptor(0, "prefilterMap", ibl->prefiltered_view(), ibl->prefiltered_sampler());
+  pbr_group.write_image_descriptor(2, "brdfLUT", ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
+  pbr_group.write_image_descriptor(2, "irradianceMap", ibl->irradiance_view(), ibl->irradiance_sampler());
+  pbr_group.write_image_descriptor(2, "prefilterMap", ibl->prefiltered_view(), ibl->prefiltered_sampler());
 }
 
 void Scene::resize(const vkwave::Swapchain& swapchain)

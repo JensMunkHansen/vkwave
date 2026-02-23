@@ -545,6 +545,10 @@ GraphicsPipelineOutBundle create_graphics_pipeline(
   {
     dynamicStates.push_back(vk::DynamicState::eCullModeEXT);
   }
+  if (specification.dynamicDepthWrite)
+  {
+    dynamicStates.push_back(vk::DynamicState::eDepthWriteEnableEXT);
+  }
   if (specification.stencilWriteEnabled)
   {
     dynamicStates.push_back(vk::DynamicState::eStencilReference);

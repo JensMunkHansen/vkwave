@@ -25,6 +25,9 @@ layout(push_constant) uniform PushConstants {
   float roughnessFactor;
   float time;
   int debugMode;
+  uint flags;
+  uint alphaMode;
+  float alphaCutoff;
 } pc;
 
 // Outputs to fragment shader

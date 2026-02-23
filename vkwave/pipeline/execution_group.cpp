@@ -85,6 +85,8 @@ ExecutionGroup::ExecutionGroup(
   bundle_in.depthWriteEnabled = spec.depth_write;
   bundle_in.depthFormat = spec.depth_format;
   bundle_in.blendEnabled = spec.blend;
+  bundle_in.dynamicCullMode = spec.dynamic_cull_mode;
+  bundle_in.dynamicDepthWrite = spec.dynamic_depth_write;
   bundle_in.msaaSamples = spec.msaa_samples;
   bundle_in.vertexModule = vert_mod;
   bundle_in.fragmentModule = frag_mod;
@@ -209,73 +211,89 @@ void ExecutionGroup::create_frame_resources_internal(
   // Create descriptor pool and sets if layouts were provided
   if (!m_descriptor_layouts.empty())
   {
-    // Compute pool sizes from reflected sets
+    const auto num_sets = static_cast<uint32_t>(m_descriptor_layouts.size());
+
+    // Fill in default set counts (ring-buffered = count) for any set not overridden.
+    // 0 means "not explicitly set" — replace with the ring-buffer count.
+    m_set_counts.resize(num_sets, count);
+    for (auto& c : m_set_counts)
+      if (c == 0) c = count;
+
+    // Compute pool sizes: each binding type × that set's allocation count
+    uint32_t total_sets = 0;
     std::vector<vk::DescriptorPoolSize> pool_sizes;
     for (auto& set_info : m_reflected_sets)
     {
+      uint32_t set_count = (set_info.set < num_sets) ? m_set_counts[set_info.set] : count;
+      total_sets += set_count;
       for (auto& b : set_info.bindings)
-      {
-        pool_sizes.push_back({ b.type, count });
-      }
+        pool_sizes.push_back({ b.type, set_count });
     }
 
     if (!pool_sizes.empty())
     {
       vk::DescriptorPoolCreateInfo pool_info{};
-      pool_info.maxSets = count;
+      pool_info.maxSets = total_sets;
       pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
       pool_info.pPoolSizes = pool_sizes.data();
 
       m_descriptor_pool = m_device.device().createDescriptorPool(pool_info);
 
-      // Allocate one set per slot (all using the same layout[0])
-      std::vector<vk::DescriptorSetLayout> alloc_layouts(count, m_descriptor_layouts[0]);
-
-      vk::DescriptorSetAllocateInfo alloc_info{};
-      alloc_info.descriptorPool = m_descriptor_pool;
-      alloc_info.descriptorSetCount = count;
-      alloc_info.pSetLayouts = alloc_layouts.data();
-
-      m_descriptor_sets = m_device.device().allocateDescriptorSets(alloc_info);
-
-      // Write descriptor updates: bind each slot's buffer to its set
-      for (uint32_t i = 0; i < count; ++i)
+      // Allocate descriptor sets per set index with each set's own count
+      m_descriptor_sets.resize(num_sets);
+      for (uint32_t s = 0; s < num_sets; ++s)
       {
-        std::vector<vk::WriteDescriptorSet> writes;
-        std::vector<vk::DescriptorBufferInfo> buffer_infos;
-        buffer_infos.reserve(m_binding_to_handle.size());
+        uint32_t n = m_set_counts[s];
+        std::vector<vk::DescriptorSetLayout> alloc_layouts(n, m_descriptor_layouts[s]);
 
-        for (auto& [key, handle] : m_binding_to_handle)
+        vk::DescriptorSetAllocateInfo alloc_info{};
+        alloc_info.descriptorPool = m_descriptor_pool;
+        alloc_info.descriptorSetCount = n;
+        alloc_info.pSetLayouts = alloc_layouts.data();
+
+        m_descriptor_sets[s] = m_device.device().allocateDescriptorSets(alloc_info);
+      }
+
+      // Write UBO/SSBO buffer descriptors to sets that contain buffer bindings.
+      // Buffers are ring-buffered by slot, so the set's allocation count must
+      // match `count` for the buffer index to make sense.
+      for (auto& [key, handle] : m_binding_to_handle)
+      {
+        uint32_t s = key.first;
+        if (s >= num_sets) continue;
+        assert(m_set_counts[s] == count &&
+          "set with auto-created buffers must have allocation count == ring-buffer count");
+
+        // Find the descriptor type
+        vk::DescriptorType dtype = vk::DescriptorType::eUniformBuffer;
+        for (auto& set_info : m_reflected_sets)
         {
-          auto& buf = *m_buffers[handle][i];
-          buffer_infos.push_back({ buf.buffer(), 0, buf.size() });
-
-          // Find the binding info for the descriptor type
-          vk::DescriptorType dtype = vk::DescriptorType::eUniformBuffer;
-          for (auto& set_info : m_reflected_sets)
+          if (set_info.set != s) continue;
+          for (auto& b : set_info.bindings)
           {
-            if (set_info.set != key.first) continue;
-            for (auto& b : set_info.bindings)
+            if (b.binding == key.second)
             {
-              if (b.binding == key.second)
-              {
-                dtype = b.type;
-                break;
-              }
+              dtype = b.type;
+              break;
             }
           }
+        }
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+          auto& buf = *m_buffers[handle][i];
+          vk::DescriptorBufferInfo buffer_info{ buf.buffer(), 0, buf.size() };
 
           vk::WriteDescriptorSet write{};
-          write.dstSet = m_descriptor_sets[i];
+          write.dstSet = m_descriptor_sets[s][i];
           write.dstBinding = key.second;
           write.dstArrayElement = 0;
           write.descriptorCount = 1;
           write.descriptorType = dtype;
-          write.pBufferInfo = &buffer_infos.back();
-          writes.push_back(write);
-        }
+          write.pBufferInfo = &buffer_info;
 
-        m_device.device().updateDescriptorSets(writes, {});
+          m_device.device().updateDescriptorSets(write, {});
+        }
       }
     }
   }
@@ -289,6 +307,8 @@ void ExecutionGroup::destroy_frame_resources()
     m_device.device().destroyDescriptorPool(m_descriptor_pool);
     m_descriptor_pool = VK_NULL_HANDLE;
   }
+  for (auto& group : m_descriptor_sets)
+    group.clear();
   m_descriptor_sets.clear();
   m_buffers.clear();
   m_depth_buffer.reset();
@@ -297,13 +317,20 @@ void ExecutionGroup::destroy_frame_resources()
   SubmissionGroup::destroy_frame_resources();
 }
 
+void ExecutionGroup::set_descriptor_count(uint32_t set_index, uint32_t n)
+{
+  if (m_set_counts.size() <= set_index)
+    m_set_counts.resize(set_index + 1, 0);
+  m_set_counts[set_index] = n;
+}
+
 void ExecutionGroup::write_image_descriptor(
   uint32_t set, uint32_t binding,
   vk::ImageView view, vk::Sampler sampler, vk::ImageLayout layout)
 {
-  assert(!m_descriptor_sets.empty() && "call after create_frame_resources()");
+  assert(set < m_descriptor_sets.size() && "set index out of range");
 
-  for (size_t i = 0; i < m_descriptor_sets.size(); ++i)
+  for (size_t i = 0; i < m_descriptor_sets[set].size(); ++i)
   {
     vk::DescriptorImageInfo image_info{};
     image_info.sampler = sampler;
@@ -311,7 +338,7 @@ void ExecutionGroup::write_image_descriptor(
     image_info.imageLayout = layout;
 
     vk::WriteDescriptorSet write{};
-    write.dstSet = m_descriptor_sets[i];
+    write.dstSet = m_descriptor_sets[set][i];
     write.dstBinding = binding;
     write.dstArrayElement = 0;
     write.descriptorCount = 1;
@@ -323,11 +350,11 @@ void ExecutionGroup::write_image_descriptor(
 }
 
 void ExecutionGroup::write_image_descriptor(
-  uint32_t set, uint32_t binding, uint32_t slot,
+  uint32_t set, uint32_t binding, uint32_t index,
   vk::ImageView view, vk::Sampler sampler, vk::ImageLayout layout)
 {
-  assert(!m_descriptor_sets.empty() && "call after create_frame_resources()");
-  assert(slot < m_descriptor_sets.size() && "slot out of range");
+  assert(set < m_descriptor_sets.size() && "set index out of range");
+  assert(index < m_descriptor_sets[set].size() && "index out of range");
 
   vk::DescriptorImageInfo image_info{};
   image_info.sampler = sampler;
@@ -335,7 +362,7 @@ void ExecutionGroup::write_image_descriptor(
   image_info.imageLayout = layout;
 
   vk::WriteDescriptorSet write{};
-  write.dstSet = m_descriptor_sets[slot];
+  write.dstSet = m_descriptor_sets[set][index];
   write.dstBinding = binding;
   write.dstArrayElement = 0;
   write.descriptorCount = 1;
@@ -423,16 +450,19 @@ Buffer& ExecutionGroup::ubo(uint32_t set, uint32_t binding, uint32_t slot)
 
 vk::DescriptorSet ExecutionGroup::descriptor_set() const
 {
-  assert(!m_descriptor_sets.empty() && "no descriptor sets allocated");
-  assert(m_current_slot < m_descriptor_sets.size() && "descriptor_set() called before create_frame_resources()");
-  return m_descriptor_sets[m_current_slot];
+  return descriptor_set(0, m_current_slot);
 }
 
 vk::DescriptorSet ExecutionGroup::descriptor_set(uint32_t slot) const
 {
-  assert(!m_descriptor_sets.empty() && "no descriptor sets allocated");
-  assert(slot < m_descriptor_sets.size() && "slot out of range");
-  return m_descriptor_sets[slot];
+  return descriptor_set(0, slot);
+}
+
+vk::DescriptorSet ExecutionGroup::descriptor_set(uint32_t set_index, uint32_t i) const
+{
+  assert(set_index < m_descriptor_sets.size() && "set index out of range");
+  assert(i < m_descriptor_sets[set_index].size() && "index out of range");
+  return m_descriptor_sets[set_index][i];
 }
 
 } // namespace vkwave

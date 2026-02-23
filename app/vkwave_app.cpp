@@ -184,6 +184,12 @@ int main(int argc, char** argv)
     ImGui::SliderFloat("Intensity", &scene.pbr_pass.light_intensity, 0.0f, 10.0f);
     ImGui::ColorEdit3("Light Color", &scene.pbr_pass.light_color.x);
 
+    // Feature toggles
+    ImGui::Separator();
+    ImGui::Text("Features");
+    ImGui::Checkbox("Normal Mapping", &scene.pbr_pass.enable_normal_mapping);
+    ImGui::Checkbox("Emissive", &scene.pbr_pass.enable_emissive);
+
     // Material overrides
     ImGui::Separator();
     ImGui::Text("Material Overrides");

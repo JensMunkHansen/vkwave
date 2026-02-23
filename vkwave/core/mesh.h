@@ -50,6 +50,10 @@ public:
   /// @param cmd The command buffer to record to.
   void draw(vk::CommandBuffer cmd) const;
 
+  /// @brief Record an indexed draw for a sub-range of the index buffer.
+  void draw_indexed(vk::CommandBuffer cmd, uint32_t index_count,
+    uint32_t first_index, int32_t vertex_offset) const;
+
   /// @brief Get the number of vertices.
   [[nodiscard]] uint32_t vertex_count() const { return m_vertex_count; }
 

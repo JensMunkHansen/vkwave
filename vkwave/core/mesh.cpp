@@ -73,6 +73,12 @@ void Mesh::draw(vk::CommandBuffer cmd) const
   }
 }
 
+void Mesh::draw_indexed(vk::CommandBuffer cmd, uint32_t index_count,
+  uint32_t first_index, int32_t vertex_offset) const
+{
+  cmd.drawIndexed(index_count, 1, first_index, vertex_offset, 0);
+}
+
 std::unique_ptr<Mesh> Mesh::create_cube(const Device& device)
 {
   const float s = 0.5f;

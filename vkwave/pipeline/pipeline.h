@@ -38,6 +38,7 @@ struct GraphicsPipelineInBundle
   // Rasterizer options
   bool backfaceCulling{ true };
   bool dynamicCullMode{ false };
+  bool dynamicDepthWrite{ false };
 
   // Depth testing
   bool depthTestEnabled{ false };
@@ -113,6 +114,8 @@ struct PipelineSpec
   bool depth_write{ true };
   vk::Format depth_format{ vk::Format::eD32Sfloat };
   bool blend{ false };
+  bool dynamic_depth_write{ false };
+  bool dynamic_cull_mode{ false };
   vk::SampleCountFlagBits msaa_samples{ vk::SampleCountFlagBits::e1 };
 
   /// Optional: use pre-created render pass instead of auto-creating.

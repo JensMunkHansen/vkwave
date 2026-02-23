@@ -66,8 +66,12 @@ class ExecutionGroup : public SubmissionGroup
   std::map<std::pair<uint32_t, uint32_t>, BufferHandle> m_binding_to_handle;
 
   // Descriptor set management
+  // Per-set allocation counts: m_set_counts[set_index] = how many descriptor sets
+  // to allocate. Default: all sets get `count` (ring-buffered). Override via
+  // set_descriptor_count() before create_frame_resources().
+  std::vector<uint32_t> m_set_counts;
   vk::DescriptorPool m_descriptor_pool{ VK_NULL_HANDLE };
-  std::vector<vk::DescriptorSet> m_descriptor_sets; // one per slot
+  std::vector<std::vector<vk::DescriptorSet>> m_descriptor_sets; // [set_index][i]
 
   // Offscreen color views (when set, used instead of swapchain views for framebuffers)
   std::vector<vk::ImageView> m_color_views;
@@ -119,24 +123,28 @@ public:
   /// Throws if the name is not found in the reflected set.
   [[nodiscard]] uint32_t binding_index(uint32_t set, const std::string& name) const;
 
-  /// Write a combined image sampler descriptor to all N slots (by binding index).
-  /// Call after create_frame_resources().
+  /// Override the allocation count for a specific descriptor set index.
+  /// Default: all sets get `count` (ring-buffered per swapchain image).
+  /// Call before create_frame_resources().
+  void set_descriptor_count(uint32_t set_index, uint32_t n);
+
+  /// Write a combined image sampler to all allocations of a set (by binding index).
   void write_image_descriptor(uint32_t set, uint32_t binding,
                               vk::ImageView view, vk::Sampler sampler,
                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
-  /// Write a combined image sampler descriptor to a single slot (by binding index).
-  void write_image_descriptor(uint32_t set, uint32_t binding, uint32_t slot,
+  /// Write a combined image sampler to one allocation of a set (by binding index).
+  void write_image_descriptor(uint32_t set, uint32_t binding, uint32_t index,
                               vk::ImageView view, vk::Sampler sampler,
                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
-  /// Write a combined image sampler descriptor to all N slots (by GLSL name).
+  /// Write a combined image sampler to all allocations of a set (by GLSL name).
   void write_image_descriptor(uint32_t set, const std::string& name,
                               vk::ImageView view, vk::Sampler sampler,
                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
-  /// Write a combined image sampler descriptor to a single slot (by GLSL name).
-  void write_image_descriptor(uint32_t set, const std::string& name, uint32_t slot,
+  /// Write a combined image sampler to one allocation of a set (by GLSL name).
+  void write_image_descriptor(uint32_t set, const std::string& name, uint32_t index,
                               vk::ImageView view, vk::Sampler sampler,
                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
@@ -147,11 +155,14 @@ public:
   /// Get the UBO/SSBO buffer for a given (set, binding) at an explicit slot.
   Buffer& ubo(uint32_t set, uint32_t binding, uint32_t slot);
 
-  /// Get the descriptor set for the current slot (valid inside record callback).
+  /// Get descriptor set for set_index=0, current slot (valid inside record callback).
   [[nodiscard]] vk::DescriptorSet descriptor_set() const;
 
-  /// Get the descriptor set for an explicit slot.
+  /// Get descriptor set for set_index=0, explicit slot.
   [[nodiscard]] vk::DescriptorSet descriptor_set(uint32_t slot) const;
+
+  /// Get the i-th descriptor set for a given set index.
+  [[nodiscard]] vk::DescriptorSet descriptor_set(uint32_t set_index, uint32_t i) const;
 
   [[nodiscard]] vk::Pipeline pipeline() const { return m_pipeline; }
   [[nodiscard]] vk::PipelineLayout layout() const { return m_layout; }

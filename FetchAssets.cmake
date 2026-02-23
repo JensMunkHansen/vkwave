@@ -67,6 +67,9 @@ endfunction()
 # GLB models
 set(_GLB_MODELS
   DamagedHelmet
+  CompareMetallic
+  AlphaBlendModeTest
+  ScatteringSkull
 )
 
 foreach(_model IN LISTS _GLB_MODELS)
