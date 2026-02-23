@@ -100,19 +100,20 @@ int main(int argc, char** argv)
 
   auto fps_time = std::chrono::steady_clock::now();
   uint64_t fps_frames = 0;
+  double avg_fps = 0.0;
 
   while (!app.should_close() && !app.frame_limit_reached())
   {
     app.poll();
 
-    // Update title bar FPS
+    // Update averaged FPS (title bar + ImGui)
     ++fps_frames;
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration<double>(now - fps_time).count();
     if (elapsed >= 0.5)
     {
-      double fps = fps_frames / elapsed;
-      app.window.set_title(fmt::format("{} — {:.0f} fps", config.window_title, fps));
+      avg_fps = fps_frames / elapsed;
+      app.window.set_title(fmt::format("{} — {:.0f} fps", config.window_title, avg_fps));
       fps_frames = 0;
       fps_time = now;
     }
@@ -127,7 +128,7 @@ int main(int argc, char** argv)
 
     scene.imgui->new_frame();
     ImGui::Begin("vkwave");
-    ImGui::Text("%.0f fps", 1.0f / app.graph.delta_time());
+    ImGui::Text("%.0f fps", avg_fps);
     ImGui::Separator();
 
     // PBR debug modes
