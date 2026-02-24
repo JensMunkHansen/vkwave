@@ -6,9 +6,6 @@
 
 #include <span>
 
-// Dynamic dispatch storage (required by VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
-VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
-
 static constexpr bool kDebug =
 #ifdef VKWAVE_DEBUG
   true;

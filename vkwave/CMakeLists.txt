@@ -105,9 +105,11 @@ target_compile_definitions(${TARGET_NAME}
 )
 
 
-# LTO for GCC/Clang only
+# LTO for GCC/Clang only — MSVC 14.44 /GL triggers ICE (C1001) during LTCG
+# on multiple source files (exception.cpp, commands.cpp).
+# The exe targets still get /LTCG via sps_link_optimization().
+include(spsCompilerPlatformFlags)
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-  include(spsCompilerPlatformFlags)
   sps_link_optimization(${TARGET_NAME})
 endif()
 

@@ -13,6 +13,38 @@
             "hidden": true
         },
         {
+            "name": "windows-msvc",
+            "inherits": "default",
+            "binaryDir": "build/windows-msvc",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl",
+                "CMAKE_CXX_COMPILER": "cl",
+                "CMAKE_PREFIX_PATH": "$env{USERPROFILE}/vkwavepkg/windows/msvc/install",
+                "BUILD_TESTING": "ON"
+            }
+        },
+        {
+            "name": "windows-clang",
+            "inherits": "default",
+            "binaryDir": "build/windows-clang",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl",
+                "CMAKE_PREFIX_PATH": "$env{USERPROFILE}/vkwavepkg/windows/clang/install",
+                "BUILD_TESTING": "ON"
+            }
+        },
+        {
             "name": "linux-clang",
             "inherits": "default",
             "binaryDir": "build/linux-clang",
@@ -56,6 +88,26 @@
         }
     ],
     "buildPresets": [
+        {
+            "name": "Debug-msvc",
+            "configurePreset": "windows-msvc",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Release-msvc",
+            "configurePreset": "windows-msvc",
+            "configuration": "Release"
+        },
+        {
+            "name": "Debug-win-clang",
+            "configurePreset": "windows-clang",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Release-win-clang",
+            "configurePreset": "windows-clang",
+            "configuration": "Release"
+        },
         {
             "name": "Debug",
             "configurePreset": "linux-gcc",

@@ -52,13 +52,17 @@ int main(int argc, char** argv)
   spdlog::set_level(kDebug ? spdlog::level::debug : spdlog::level::info);
   spdlog::info("vkwave -- async GPU rendering engine");
 
+  try {
+
   auto maybe_config = load_config_with_cli(argc, argv);
   if (!maybe_config)
     return EXIT_SUCCESS;
   auto config = std::move(*maybe_config);
 
+#ifndef _WIN32
   if (config.use_x11)
     setenv("VKWAVE_USE_X11", "1", 1);
+#endif
 
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
@@ -244,5 +248,14 @@ int main(int argc, char** argv)
   app.graph.drain();
 
   spdlog::info("Exiting after {} frames", app.graph.cpu_frame());
+
+  } catch (const vk::SystemError& e) {
+    spdlog::critical("Vulkan error: {}", e.what());
+    return EXIT_FAILURE;
+  } catch (const std::exception& e) {
+    spdlog::critical("Fatal error: {}", e.what());
+    return EXIT_FAILURE;
+  }
+
   return EXIT_SUCCESS;
 }

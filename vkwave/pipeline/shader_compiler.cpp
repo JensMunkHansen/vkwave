@@ -129,6 +129,10 @@ ShaderCompiler::Result ShaderCompiler::compile(
   options.SetOptimizationLevel(shaderc_optimization_level_zero);
 #endif
 
+  // Always generate debug info — SPIRV-Reflect needs binding names
+  // for descriptor lookup (stripped by performance optimization otherwise).
+  options.SetGenerateDebugInfo();
+
   // Extract filename for error messages
   auto slash = filepath.find_last_of("/\\");
   std::string filename = (slash != std::string::npos)

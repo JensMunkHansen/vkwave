@@ -7,7 +7,7 @@
 #include <vkwave/pipeline/pipeline.h>
 #include <vkwave/pipeline/shader_compiler.h>
 
-#include <fmt/format.h>
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
 #include <cassert>

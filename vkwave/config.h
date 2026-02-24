@@ -5,6 +5,6 @@
 // Note: VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1 is defined via CMakeLists.txt
 // to ensure it's defined before any vulkan.hpp includes in all translation units
 
-#define SHADER_DIR "/home/jmh/github/vkwave/vkwave/shaders/"
+#define SHADER_DIR "C:/Transport/vkwave/vkwave/shaders/"
 
 #define VKWAVE_DEBUG

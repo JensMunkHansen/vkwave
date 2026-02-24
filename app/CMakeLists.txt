@@ -7,9 +7,11 @@ add_executable(vkwave_app
   cli.cpp
 )
 
+# MSVC 14.44 ICE (C1001) during LTCG — skip on MSVC
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   sps_link_optimization(vkwave_app)
 endif()
+sps_copy_runtime_dlls(vkwave_app)
 
 target_link_libraries(vkwave_app
   PUBLIC

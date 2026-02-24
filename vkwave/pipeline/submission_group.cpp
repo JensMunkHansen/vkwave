@@ -4,7 +4,7 @@
 #include <vkwave/core/device.h>
 #include <vkwave/core/swapchain.h>
 
-#include <fmt/format.h>
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
 namespace vkwave

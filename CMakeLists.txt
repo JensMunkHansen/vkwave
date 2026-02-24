@@ -26,6 +26,7 @@ project(vkwave
 # Set up build directories (GNUInstallDirs layout, RPATH, multi-config output dirs)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake")
 include(spsInstallDirs)
+include(spsTargets)
 
 # Find dependencies (installed by build_dependencies.sh or system packages)
 include(dependencies.cmake)
