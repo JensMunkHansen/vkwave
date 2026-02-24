@@ -1,15 +1,12 @@
 #include "scene.h"
 #include "engine.h"
 
-#include <vkwave/core/device.h>
 #include <vkwave/core/swapchain.h>
-#include <vkwave/pipeline/pipeline.h>
 
 #include <vulkan/vulkan_to_string.hpp>
 
 #include <imgui.h>
 
-#include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -17,426 +14,45 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
-static constexpr bool kDebug =
-#ifdef VKWAVE_DEBUG
-  true;
-#else
-  false;
-#endif
-
 // ---------------------------------------------------------------------------
-// Offscreen HDR image management
+// Construction / destruction
 // ---------------------------------------------------------------------------
 
-void Scene::create_hdr_images(const vkwave::Device& device,
-  vk::Extent2D extent, uint32_t count)
+Scene::Scene(Engine& engine)
+  : m_engine(&engine)
 {
-  hdr_images.clear();
-  for (uint32_t i = 0; i < count; ++i)
-  {
-    hdr_images.emplace_back(device, kHdrFormat, extent,
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-      fmt::format("hdr_image_{}", i));
-  }
 }
 
-void Scene::create_sampler()
+void Scene::build_pipeline()
 {
-  vk::SamplerCreateInfo info{};
-  info.magFilter = vk::Filter::eLinear;
-  info.minFilter = vk::Filter::eLinear;
-  info.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-  info.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-  info.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-  info.anisotropyEnable = VK_FALSE;
-  info.unnormalizedCoordinates = VK_FALSE;
-  info.mipmapMode = vk::SamplerMipmapMode::eLinear;
-
-  hdr_sampler = m_engine->device.device().createSampler(info);
-}
-
-// ---------------------------------------------------------------------------
-// Fallback textures (1x1 pixels for missing material slots)
-// ---------------------------------------------------------------------------
-
-void Scene::create_fallback_textures()
-{
-  // White (base color, AO fallback)
-  const uint8_t white[] = { 255, 255, 255, 255 };
-  fallback_white = std::make_unique<vkwave::Texture>(
-    m_engine->device, "fallback_white", white, 1, 1, false);
-
-  // Flat normal (128,128,255 = (0,0,1) in tangent space)
-  const uint8_t flat_normal[] = { 128, 128, 255, 255 };
-  fallback_normal = std::make_unique<vkwave::Texture>(
-    m_engine->device, "fallback_normal", flat_normal, 1, 1, true);
-
-  // Default metallic-roughness: non-metallic, medium roughness
-  // glTF: G=roughness, B=metallic → (0, 128, 0, 255) = roughness 0.5, metallic 0
-  const uint8_t default_mr[] = { 0, 128, 0, 255 };
-  fallback_mr = std::make_unique<vkwave::Texture>(
-    m_engine->device, "fallback_mr", default_mr, 1, 1, true);
-
-  // Black (emissive fallback)
-  const uint8_t black[] = { 0, 0, 0, 255 };
-  fallback_black = std::make_unique<vkwave::Texture>(
-    m_engine->device, "fallback_black", black, 1, 1, false);
-}
-
-// ---------------------------------------------------------------------------
-// Write PBR texture descriptors to execution group
-// ---------------------------------------------------------------------------
-
-void Scene::write_pbr_descriptors(vkwave::ExecutionGroup& group)
-{
-  auto tex_or = [](const std::unique_ptr<vkwave::Texture>& tex,
-                   const std::unique_ptr<vkwave::Texture>& fallback)
-    -> const vkwave::Texture&
-  {
-    return tex ? *tex : *fallback;
-  };
-
-  const bool use_scene = !gltf_scene.materials.empty();
-  const uint32_t mat_count = use_scene
-    ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
-
-  // Set 1: per-material textures (one descriptor set per material)
-  for (uint32_t m = 0; m < mat_count; ++m)
-  {
-    auto& mat_base  = use_scene ? gltf_scene.materials[m].baseColorTexture         : gltf_model.baseColorTexture;
-    auto& mat_norm  = use_scene ? gltf_scene.materials[m].normalTexture            : gltf_model.normalTexture;
-    auto& mat_mr    = use_scene ? gltf_scene.materials[m].metallicRoughnessTexture : gltf_model.metallicRoughnessTexture;
-    auto& mat_emis  = use_scene ? gltf_scene.materials[m].emissiveTexture          : gltf_model.emissiveTexture;
-    auto& mat_ao    = use_scene ? gltf_scene.materials[m].aoTexture                : gltf_model.aoTexture;
-
-    auto& base = tex_or(mat_base, fallback_white);
-    group.write_image_descriptor(1, "baseColorTexture", m, base.image_view(), base.sampler());
-
-    auto& norm = tex_or(mat_norm, fallback_normal);
-    group.write_image_descriptor(1, "normalTexture", m, norm.image_view(), norm.sampler());
-
-    auto& mr = tex_or(mat_mr, fallback_mr);
-    group.write_image_descriptor(1, "metallicRoughnessTexture", m, mr.image_view(), mr.sampler());
-
-    auto& emis = tex_or(mat_emis, fallback_black);
-    group.write_image_descriptor(1, "emissiveTexture", m, emis.image_view(), emis.sampler());
-
-    auto& ao = tex_or(mat_ao, fallback_white);
-    group.write_image_descriptor(1, "aoTexture", m, ao.image_view(), ao.sampler());
-  }
-
-  // Set 2: per-scene IBL textures (single descriptor set)
-  group.write_image_descriptor(2, "brdfLUT",
-    ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
-  group.write_image_descriptor(2, "irradianceMap",
-    ibl->irradiance_view(), ibl->irradiance_sampler());
-  group.write_image_descriptor(2, "prefilterMap",
-    ibl->prefiltered_view(), ibl->prefiltered_sampler());
-}
-
-// ---------------------------------------------------------------------------
-// Scene construction
-// ---------------------------------------------------------------------------
-
-Scene::Scene(Engine& app)
-  : m_engine(&app)
-{
-  // Load model or fall back to cube
-  if (!app.config.model_path.empty())
-  {
-    if (!std::filesystem::exists(app.config.model_path))
-    {
-      spdlog::warn("Model file not found: {} -- using default cube", app.config.model_path);
-    }
-    else
-    {
-      spdlog::info("Loading glTF scene: {}", app.config.model_path);
-      gltf_scene = vkwave::load_gltf_scene(app.device, app.config.model_path);
-      if (!gltf_scene.mesh)
-      {
-        spdlog::warn("Scene load returned no mesh, falling back to single-material loader");
-        gltf_model = vkwave::load_gltf_model(app.device, app.config.model_path);
-      }
-    }
-  }
-
-  if (!gltf_scene.mesh && !gltf_model.mesh)
-  {
-    spdlog::info("Using default cube mesh");
-    cube_mesh = vkwave::Mesh::create_cube(app.device);
-  }
-
-  const vkwave::Mesh* active_mesh = gltf_scene.mesh
-    ? gltf_scene.mesh.get()
-    : (gltf_model.mesh ? gltf_model.mesh.get() : cube_mesh.get());
-
-  // Create IBL resources
-  if (!app.config.hdr_path.empty())
-  {
-    if (!std::filesystem::exists(app.config.hdr_path))
-    {
-      spdlog::warn("HDR file not found: {} -- using default neutral IBL", app.config.hdr_path);
-      ibl = std::make_unique<vkwave::IBL>(app.device);
-    }
-    else
-    {
-      spdlog::info("Loading HDR environment: {}", app.config.hdr_path);
-      ibl = std::make_unique<vkwave::IBL>(app.device, app.config.hdr_path);
-    }
-  }
-  else
-  {
-    spdlog::info("Using default neutral IBL environment");
-    ibl = std::make_unique<vkwave::IBL>(app.device);
-  }
-
-  // Determine which hdr_paths index matches the initial hdr_path
-  current_hdr_index = -1;
-  for (int i = 0; i < static_cast<int>(app.config.hdr_paths.size()); ++i)
-  {
-    if (app.config.hdr_paths[i] == app.config.hdr_path)
-    {
-      current_hdr_index = i;
-      break;
-    }
-  }
-  if (current_hdr_index < 0 && !app.config.hdr_paths.empty())
-    current_hdr_index = 0;
-
-  // Determine which model_paths index matches the initial model_path
-  current_model_index = -1;
-  for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
-  {
-    if (app.config.model_paths[i] == app.config.model_path)
-    {
-      current_model_index = i;
-      break;
-    }
-  }
-
-  // Create fallback textures for missing material slots
-  create_fallback_textures();
-
-  camera.set_position(0.0f, 1.5f, 3.0f);
-  camera.set_focal_point(0.0f, 0.0f, 0.0f);
-  camera.set_aspect_ratio(
-    static_cast<float>(app.swapchain.extent().width) /
-    static_cast<float>(app.swapchain.extent().height));
-
-  // Create render passes (owned by Scene, shared with ExecutionGroups)
-  scene_renderpass = vkwave::make_scene_renderpass(
-    app.device.device(), kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
-  composite_renderpass = vkwave::make_composite_renderpass(
-    app.device.device(), app.swapchain.image_format(), kDebug);
-
-  // Create sampler (persistent across resize)
-  create_sampler();
-
-  // PBR pass: renders to offscreen HDR image
-  auto pbr_spec = vkwave::PBRPass::pipeline_spec();
-  pbr_spec.existing_renderpass = scene_renderpass;
-  pbr_spec.msaa_samples = msaa_samples;
-
-  // One HDR image per offscreen slot -- eliminates WAW hazard
-  const uint32_t os_depth = app.swapchain.image_count();
-  create_hdr_images(app.device, app.swapchain.extent(), os_depth);
-
-  std::vector<vk::ImageView> hdr_views;
-  hdr_views.reserve(os_depth);
-  for (uint32_t i = 0; i < os_depth; ++i)
-    hdr_views.push_back(hdr_images[i].image_view());
-
-  auto& pbr_group = app.graph.add_offscreen_group("pbr", pbr_spec, kHdrFormat, kDebug);
-  pbr_group.set_color_views(hdr_views);
-
-  // Set up shared PBR context
-  pbr_ctx.group = &pbr_group;
-  pbr_ctx.mesh = active_mesh;
-  if (gltf_scene.mesh && !gltf_scene.primitives.empty())
-  {
-    pbr_ctx.primitives = gltf_scene.primitives.data();
-    pbr_ctx.primitive_count = static_cast<uint32_t>(gltf_scene.primitives.size());
-    pbr_ctx.materials = gltf_scene.materials.data();
-    pbr_ctx.material_count = static_cast<uint32_t>(gltf_scene.materials.size());
-
-    for (auto& mat : gltf_scene.materials)
-    {
-      if (mat.alphaMode == vkwave::AlphaMode::Blend)
-      {
-        pbr_ctx.has_transparent = true;
-        break;
-      }
-    }
-  }
-
-  // Wire passes to shared context
-  pbr_pass.ctx = &pbr_ctx;
-  blend_pass.ctx = &pbr_ctx;
-
-  pbr_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
-    pbr_pass.record(cmd);
-    blend_pass.record(cmd);
-  });
-
-  // Composite pass: samples HDR image, tonemaps, writes to swapchain
-  auto comp_spec = vkwave::CompositePass::pipeline_spec();
-  comp_spec.existing_renderpass = composite_renderpass;
-
-  auto& comp_group = app.graph.set_present_group(
-    "composite", comp_spec, app.swapchain.image_format(), kDebug);
-  composite_pass.group = &comp_group;
-  comp_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t frame_index) {
-    // Update descriptor to sample from the latest offscreen HDR image.
-    // begin_frame() already waited for this slot's previous use, so the
-    // descriptor set is safe to update.
-    auto slot = m_engine->graph.last_offscreen_slot();
-    auto& cg = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.present_group());
-    cg.write_image_descriptor(0, "hdrImage", frame_index,
-      hdr_images[slot].image_view(), hdr_sampler);
-    composite_pass.record(cmd);
-  });
-
-  // Gate present at display refresh rate -- offscreen runs at GPU speed,
-  // present only acquires/presents when the display needs a new frame.
-  float refresh = static_cast<float>(app.window.refresh_rate());
-  if (refresh > 0.0f)
-    comp_group.set_gating(vkwave::GatingMode::wall_clock, refresh);
-
-  // ImGui overlay -- records into the composite group's command buffer
-  imgui = std::make_unique<vkwave::ImGuiOverlay>(
-    app.instance.instance(), app.device,
-    app.window.get(), app.swapchain.image_format(),
-    app.swapchain.image_count(), kDebug);
-
-  auto* overlay = imgui.get();
-  comp_group.set_post_record_fn([overlay](vk::CommandBuffer cmd, uint32_t slot) {
-    overlay->record(cmd, slot);
-  });
-
-  // Set resize callback so the graph can recreate offscreen images on resize
-  app.graph.set_resize_fn([this](vk::Extent2D extent) {
-    auto depth = m_engine->graph.offscreen_depth();
-    create_hdr_images(m_engine->device, extent, depth);
-
-    // Update PBR group's color views (one HDR image per slot)
-    std::vector<vk::ImageView> views;
-    views.reserve(depth);
-    for (uint32_t i = 0; i < depth; ++i)
-      views.push_back(hdr_images[i].image_view());
-    auto& cg = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
-    cg.set_color_views(views);
-  });
-
-  // Descriptor set frequency layout:
-  //   Set 0: per-frame UBO (ring-buffered, count = swapchain images) — default
-  //   Set 1: per-material textures (count = number of materials)
-  //   Set 2: per-scene IBL (count = 1)
-  {
-    uint32_t mat_count = gltf_scene.mesh && !gltf_scene.materials.empty()
-      ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
-    pbr_group.set_descriptor_count(1, mat_count);
-    pbr_group.set_descriptor_count(2, 1);
-  }
-
-  // Build all frame resources
-  app.graph.build(app.swapchain);
-
-  // Write texture descriptors (after build allocates descriptor sets)
-  write_pbr_descriptors(pbr_group);
-
-  // Write HDR image descriptor to composite pass
-  comp_group.write_image_descriptor(0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
-
-  // Overlay framebuffers reference swapchain image views -- create after build
-  imgui->create_frame_resources(app.swapchain, app.swapchain.image_count());
+  pipeline = std::make_unique<ScenePipeline>(*m_engine, data, vk::SampleCountFlagBits::e1);
+  wire_pbr_context();
+  wire_record_callbacks();
 }
 
 Scene::~Scene()
 {
   m_engine->device.device().waitIdle();
-
-  imgui.reset();
-  hdr_images.clear();
-
-  auto dev = m_engine->device.device();
-  if (hdr_sampler)
-    dev.destroySampler(hdr_sampler);
-  if (scene_renderpass)
-    dev.destroyRenderPass(scene_renderpass);
-  if (composite_renderpass)
-    dev.destroyRenderPass(composite_renderpass);
 }
 
-void Scene::switch_ibl(const std::string& hdr_path)
+// ---------------------------------------------------------------------------
+// Wiring helpers
+// ---------------------------------------------------------------------------
+
+void Scene::wire_pbr_context()
 {
-  // Drain GPU — in-flight descriptor sets still reference old IBL views
-  m_engine->graph.drain();
-
-  // Create new IBL (old one destroyed by unique_ptr reassignment)
-  if (hdr_path.empty() || !std::filesystem::exists(hdr_path))
-  {
-    if (!hdr_path.empty())
-      spdlog::warn("HDR file not found: {} -- using neutral IBL", hdr_path);
-    ibl = std::make_unique<vkwave::IBL>(m_engine->device);
-  }
-  else
-  {
-    spdlog::info("Switching IBL to: {}", hdr_path);
-    ibl = std::make_unique<vkwave::IBL>(m_engine->device, hdr_path);
-  }
-
-  // Rewrite IBL descriptors (set 2: per-scene globals)
-  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
-  pbr_group.write_image_descriptor(2, "brdfLUT", ibl->brdf_lut_view(), ibl->brdf_lut_sampler());
-  pbr_group.write_image_descriptor(2, "irradianceMap", ibl->irradiance_view(), ibl->irradiance_sampler());
-  pbr_group.write_image_descriptor(2, "prefilterMap", ibl->prefiltered_view(), ibl->prefiltered_sampler());
-}
-
-void Scene::switch_model(const std::string& model_path)
-{
-  // Drain GPU — in-flight command buffers still reference old mesh/descriptors
-  m_engine->graph.drain();
-
-  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
-
-  // Reset old model data
-  gltf_scene = {};
-  gltf_model = {};
-  cube_mesh.reset();
-
-  // Load new model
-  if (!model_path.empty() && std::filesystem::exists(model_path))
-  {
-    spdlog::info("Switching model to: {}", model_path);
-    gltf_scene = vkwave::load_gltf_scene(m_engine->device, model_path);
-    if (!gltf_scene.mesh)
-    {
-      spdlog::warn("Scene load returned no mesh, falling back to single-material loader");
-      gltf_model = vkwave::load_gltf_model(m_engine->device, model_path);
-    }
-  }
-
-  if (!gltf_scene.mesh && !gltf_model.mesh)
-  {
-    spdlog::info("Using default cube mesh");
-    cube_mesh = vkwave::Mesh::create_cube(m_engine->device);
-  }
-
-  const vkwave::Mesh* active_mesh = gltf_scene.mesh
-    ? gltf_scene.mesh.get()
-    : (gltf_model.mesh ? gltf_model.mesh.get() : cube_mesh.get());
-
-  // Update PBR context
-  pbr_ctx.mesh = active_mesh;
+  pbr_ctx.group = &pipeline->pbr_group();
+  pbr_ctx.mesh = data.active_mesh();
   pbr_ctx.has_transparent = false;
-  if (gltf_scene.mesh && !gltf_scene.primitives.empty())
-  {
-    pbr_ctx.primitives = gltf_scene.primitives.data();
-    pbr_ctx.primitive_count = static_cast<uint32_t>(gltf_scene.primitives.size());
-    pbr_ctx.materials = gltf_scene.materials.data();
-    pbr_ctx.material_count = static_cast<uint32_t>(gltf_scene.materials.size());
 
-    for (auto& mat : gltf_scene.materials)
+  if (data.has_multi_material())
+  {
+    pbr_ctx.primitives = data.gltf_scene.primitives.data();
+    pbr_ctx.primitive_count = static_cast<uint32_t>(data.gltf_scene.primitives.size());
+    pbr_ctx.materials = data.gltf_scene.materials.data();
+    pbr_ctx.material_count = static_cast<uint32_t>(data.gltf_scene.materials.size());
+
+    for (auto& mat : data.gltf_scene.materials)
     {
       if (mat.alphaMode == vkwave::AlphaMode::Blend)
       {
@@ -453,106 +69,81 @@ void Scene::switch_model(const std::string& model_path)
     pbr_ctx.material_count = 0;
   }
 
-  // Rebuild PBR group's descriptor pool (material count may have changed)
-  uint32_t mat_count = gltf_scene.mesh && !gltf_scene.materials.empty()
-    ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
+  pbr_pass.ctx = &pbr_ctx;
+  blend_pass.ctx = &pbr_ctx;
+  composite_pass.group = &pipeline->composite_group();
+}
 
-  pbr_group.destroy_frame_resources();
-  pbr_group.set_descriptor_count(1, mat_count);
-  pbr_group.set_descriptor_count(2, 1);
-  pbr_group.create_frame_resources(pbr_group.extent(), m_engine->graph.offscreen_depth());
+void Scene::wire_record_callbacks()
+{
+  pipeline->pbr_group().set_record_fn(
+    [this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
+      pbr_pass.record(cmd);
+      blend_pass.record(cmd);
+    });
 
-  // Rewrite all texture descriptors (material textures + IBL)
-  write_pbr_descriptors(pbr_group);
+  pipeline->composite_group().set_record_fn(
+    [this](vk::CommandBuffer cmd, uint32_t frame_index) {
+      // Update descriptor to sample from the latest offscreen HDR image.
+      // begin_frame() already waited for this slot's previous use, so the
+      // descriptor set is safe to update.
+      auto slot = m_engine->graph.last_offscreen_slot();
+      pipeline->composite_group().write_image_descriptor(
+        0, "hdrImage", frame_index,
+        pipeline->hdr_images[slot].image_view(), pipeline->hdr_sampler);
+      composite_pass.record(cmd);
+    });
+
+  auto* overlay = pipeline->imgui_overlay();
+  pipeline->composite_group().set_post_record_fn(
+    [overlay](vk::CommandBuffer cmd, uint32_t slot) {
+      overlay->record(cmd, slot);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Runtime switching
+// ---------------------------------------------------------------------------
+
+void Scene::switch_model(const std::string& model_path)
+{
+  m_engine->graph.drain();
+  data.load_model(m_engine->device, model_path);
+  wire_pbr_context();
+  pipeline->rebuild_pbr_descriptors(data);
+}
+
+void Scene::switch_ibl(const std::string& hdr_path)
+{
+  m_engine->graph.drain();
+  data.load_ibl(m_engine->device, hdr_path);
+  pipeline->write_ibl_descriptors(data);
 }
 
 void Scene::rebuild_pipeline(vk::SampleCountFlagBits new_samples)
 {
-  msaa_samples = new_samples;
-
   m_engine->graph.drain();
-
-  // Capture extent before destroying (the new group starts with zero extent)
-  auto& old_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
-  const auto extent = old_group.extent();
-  old_group.destroy_frame_resources();
-
-  // Destroy old scene render pass
-  auto dev = m_engine->device.device();
-  if (scene_renderpass)
-  {
-    dev.destroyRenderPass(scene_renderpass);
-    scene_renderpass = VK_NULL_HANDLE;
-  }
-
-  // Create new scene render pass with updated MSAA
-  scene_renderpass = vkwave::make_scene_renderpass(
-    dev, kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
-
-  // Create new PBR pipeline spec with updated render pass + MSAA
-  auto pbr_spec = vkwave::PBRPass::pipeline_spec();
-  pbr_spec.existing_renderpass = scene_renderpass;
-  pbr_spec.msaa_samples = msaa_samples;
-
-  // Replace the offscreen group (new pipeline + render pass reference)
-  auto& pbr_group = m_engine->graph.replace_offscreen_group(
-    0, "pbr", pbr_spec, kHdrFormat, kDebug);
-
-  // Rewire context + record function
-  pbr_ctx.group = &pbr_group;
-  pbr_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
-    pbr_pass.record(cmd);
-    blend_pass.record(cmd);
-  });
-
-  // Update color views from existing HDR images
-  const uint32_t os_depth = m_engine->graph.offscreen_depth();
-  std::vector<vk::ImageView> hdr_views;
-  hdr_views.reserve(os_depth);
-  for (uint32_t i = 0; i < os_depth; ++i)
-    hdr_views.push_back(hdr_images[i].image_view());
-  pbr_group.set_color_views(hdr_views);
-
-  // Set descriptor counts
-  uint32_t mat_count = gltf_scene.mesh && !gltf_scene.materials.empty()
-    ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
-  pbr_group.set_descriptor_count(1, mat_count);
-  pbr_group.set_descriptor_count(2, 1);
-
-  // Rebuild frame resources for this group
-  pbr_group.create_frame_resources(extent, os_depth);
-
-  // Rewrite descriptors
-  write_pbr_descriptors(pbr_group);
-
-  spdlog::info("MSAA changed to {}x",
-    static_cast<int>(msaa_samples));
+  pipeline->rebuild_for_msaa(new_samples, data);
+  wire_pbr_context();
+  wire_record_callbacks();
 }
 
 void Scene::resize(const vkwave::Swapchain& swapchain)
 {
-  if (imgui)
-  {
-    imgui->destroy_frame_resources();
-    imgui->create_frame_resources(swapchain, swapchain.image_count());
-  }
-
-  // Update composite pass's HDR image descriptor after resize rebuilt everything
-  auto& comp_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.present_group());
-  comp_group.write_image_descriptor(0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
-
-  // Re-write PBR texture descriptors (descriptor sets were recreated)
-  auto& pbr_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
-  write_pbr_descriptors(pbr_group);
+  pipeline->resize(swapchain, data);
 }
+
+// ---------------------------------------------------------------------------
+// Per-frame update
+// ---------------------------------------------------------------------------
 
 void Scene::update(vkwave::RenderGraph& graph)
 {
-  camera.set_aspect_ratio(
+  data.camera.set_aspect_ratio(
     static_cast<float>(graph.offscreen_group(0).extent().width) /
     static_cast<float>(graph.offscreen_group(0).extent().height));
-  pbr_ctx.view_projection = camera.view_projection_matrix();
-  pbr_ctx.cam_position = camera.position();
+  pbr_ctx.view_projection = data.camera.view_projection_matrix();
+  pbr_ctx.cam_position = data.camera.position();
   pbr_ctx.time = graph.elapsed_time();
 }
 
@@ -562,7 +153,7 @@ void Scene::update(vkwave::RenderGraph& graph)
 
 void Scene::draw_ui(Engine& app, double avg_fps)
 {
-  imgui->new_frame();
+  pipeline->imgui->new_frame();
   ImGui::Begin("vkwave");
   ImGui::Text("%.0f fps", avg_fps);
   ImGui::Separator();
@@ -630,7 +221,7 @@ void Scene::draw_ui(Engine& app, double avg_fps)
     };
 
     auto max_samples = app.device.max_usable_sample_count();
-    auto current_samples = msaa_samples;
+    auto current_samples = pipeline->msaa_samples;
     const char* msaa_label = "Off";
     for (const auto& entry : msaa_table)
       if (entry.samples == current_samples) { msaa_label = entry.label; break; }
@@ -677,22 +268,22 @@ void Scene::draw_ui(Engine& app, double avg_fps)
   {
     ImGui::Separator();
     ImGui::Text("Environment");
-    auto hdr_label = (current_hdr_index >= 0
-          && current_hdr_index < static_cast<int>(app.config.hdr_paths.size()))
-        ? std::filesystem::path(app.config.hdr_paths[current_hdr_index]).stem().string()
+    auto hdr_label = (data.current_hdr_index >= 0
+          && data.current_hdr_index < static_cast<int>(app.config.hdr_paths.size()))
+        ? std::filesystem::path(app.config.hdr_paths[data.current_hdr_index]).stem().string()
         : std::string("neutral");
     if (ImGui::BeginCombo("HDR", hdr_label.c_str()))
     {
       for (int i = 0; i < static_cast<int>(app.config.hdr_paths.size()); ++i)
       {
         auto label = std::filesystem::path(app.config.hdr_paths[i]).stem().string();
-        bool selected = (i == current_hdr_index);
+        bool selected = (i == data.current_hdr_index);
         if (ImGui::Selectable(label.c_str(), selected))
         {
-          if (i != current_hdr_index)
+          if (i != data.current_hdr_index)
           {
             switch_ibl(app.config.hdr_paths[i]);
-            current_hdr_index = i;
+            data.current_hdr_index = i;
           }
         }
         if (selected)
@@ -707,22 +298,22 @@ void Scene::draw_ui(Engine& app, double avg_fps)
   {
     ImGui::Separator();
     ImGui::Text("Model");
-    auto model_label = (current_model_index >= 0
-          && current_model_index < static_cast<int>(app.config.model_paths.size()))
-        ? std::filesystem::path(app.config.model_paths[current_model_index]).stem().string()
+    auto model_label = (data.current_model_index >= 0
+          && data.current_model_index < static_cast<int>(app.config.model_paths.size()))
+        ? std::filesystem::path(app.config.model_paths[data.current_model_index]).stem().string()
         : std::string("cube");
     if (ImGui::BeginCombo("Model", model_label.c_str()))
     {
       for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
       {
         auto label = std::filesystem::path(app.config.model_paths[i]).stem().string();
-        bool selected = (i == current_model_index);
+        bool selected = (i == data.current_model_index);
         if (ImGui::Selectable(label.c_str(), selected))
         {
-          if (i != current_model_index)
+          if (i != data.current_model_index)
           {
             switch_model(app.config.model_paths[i]);
-            current_model_index = i;
+            data.current_model_index = i;
           }
         }
         if (selected)

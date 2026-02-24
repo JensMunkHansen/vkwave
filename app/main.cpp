@@ -93,7 +93,36 @@ int main(int argc, char** argv)
   });
 
   Scene scene(app);
-  input.bind(scene.camera);
+
+  // Populate scene data -- explicit, not hidden in a constructor
+  scene.data.create_fallback_textures(app.device);
+  scene.data.load_model(app.device, app.config.model_path);
+  scene.data.load_ibl(app.device, app.config.hdr_path);
+
+  // Track which config entries are active (for UI combo boxes)
+  for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
+  {
+    if (app.config.model_paths[i] == app.config.model_path)
+    { scene.data.current_model_index = i; break; }
+  }
+  scene.data.current_hdr_index = -1;
+  for (int i = 0; i < static_cast<int>(app.config.hdr_paths.size()); ++i)
+  {
+    if (app.config.hdr_paths[i] == app.config.hdr_path)
+    { scene.data.current_hdr_index = i; break; }
+  }
+  if (scene.data.current_hdr_index < 0 && !app.config.hdr_paths.empty())
+    scene.data.current_hdr_index = 0;
+
+  scene.data.camera.set_position(0.0f, 1.5f, 3.0f);
+  scene.data.camera.set_focal_point(0.0f, 0.0f, 0.0f);
+  scene.data.camera.set_aspect_ratio(
+    static_cast<float>(app.swapchain.extent().width) /
+    static_cast<float>(app.swapchain.extent().height));
+
+  // Build rendering pipeline from populated data
+  scene.build_pipeline();
+  input.bind(scene.data.camera);
 
   spdlog::info("Swapchain images: {}", app.swapchain.image_count());
   spdlog::info("Present mode: {}", vk::to_string(app.swapchain.present_mode()));

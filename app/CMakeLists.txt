@@ -2,6 +2,8 @@ add_executable(vkwave_app
   main.cpp
   engine.cpp
   scene.cpp
+  scene_data.cpp
+  scene_pipeline.cpp
   input.cpp
   app_config.cpp
   cli.cpp
