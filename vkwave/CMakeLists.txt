@@ -25,7 +25,7 @@ target_link_libraries(imgui_impl INTERFACE imgui::imgui)
 # --- Generate config.h from template ---
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/config.h.in"
-  "${CMAKE_CURRENT_SOURCE_DIR}/config.h"
+  "${CMAKE_CURRENT_BINARY_DIR}/config.h"
   @ONLY
 )
 
@@ -80,6 +80,7 @@ add_library(${TARGET_NAME}
 target_include_directories(${TARGET_NAME}
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>"
+    "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE
     "${CGLTF_INCLUDE_DIR}"
