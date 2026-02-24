@@ -38,6 +38,8 @@ ExecutionGroup::ExecutionGroup(
   : SubmissionGroup(device, name, debug)
   , m_depth_enabled(spec.depth_test)
   , m_depth_format(spec.depth_format)
+  , m_msaa_samples(spec.msaa_samples)
+  , m_color_format(swapchain_format)
 {
   // Compile shaders
   auto vert = ShaderCompiler::compile(spec.vertex_shader, vk::ShaderStageFlagBits::eVertex);
@@ -106,11 +108,22 @@ ExecutionGroup::ExecutionGroup(
   d.destroyShaderModule(vert_mod);
   d.destroyShaderModule(frag_mod);
 
-  // Default clear values
-  m_clear_values.resize(m_depth_enabled ? 2 : 1);
-  m_clear_values[0].color = std::array<float, 4>{ 0.1f, 0.1f, 0.1f, 1.0f };
-  if (m_depth_enabled)
-    m_clear_values[1].depthStencil = vk::ClearDepthStencilValue{ 1.0f, 0 };
+  // Default clear values (attachment order matches render pass)
+  // No MSAA: [color, depth]
+  // MSAA:    [msaa_color, depth, resolve]
+  {
+    const bool msaa = m_msaa_samples != vk::SampleCountFlagBits::e1;
+    uint32_t n = 1; // color
+    if (m_depth_enabled) ++n; // depth
+    if (msaa) ++n; // resolve
+    m_clear_values.resize(n);
+
+    m_clear_values[0].color = std::array<float, 4>{ 0.1f, 0.1f, 0.1f, 1.0f };
+    if (m_depth_enabled)
+      m_clear_values[1].depthStencil = vk::ClearDepthStencilValue{ 1.0f, 0 };
+    if (msaa)
+      m_clear_values[n - 1].color = std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 1.0f };
+  }
 
   spdlog::debug("ExecutionGroup '{}': pipeline created, {} auto-buffered bindings",
     name, m_binding_to_handle.size());
@@ -165,22 +178,50 @@ void ExecutionGroup::create_frame_resources_internal(
   vk::Extent2D extent, uint32_t count,
   const std::vector<vk::ImageView>& color_views)
 {
-  // Create depth buffer if enabled (size-dependent, not ring-buffered)
+  const bool msaa = m_msaa_samples != vk::SampleCountFlagBits::e1;
+
+  // Create depth buffer if enabled (matches MSAA sample count)
   if (m_depth_enabled)
   {
     m_depth_buffer = std::make_unique<DepthStencilAttachment>(
-      m_device, m_depth_format, extent, vk::SampleCountFlagBits::e1);
+      m_device, m_depth_format, extent, m_msaa_samples);
+  }
+
+  // Create per-slot MSAA color images (transient render targets that resolve into color_views)
+  if (msaa)
+  {
+    m_msaa_images.clear();
+    m_msaa_images.reserve(count);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+      m_msaa_images.emplace_back(m_device, m_color_format, extent,
+        vk::ImageUsageFlagBits::eColorAttachment,
+        fmt::format("{}_msaa_{}", m_name, i), m_msaa_samples);
+    }
   }
 
   // Create framebuffers
+  // Attachment order matches make_scene_renderpass():
+  //   MSAA:     [msaa_color, depth, resolve]
+  //   No MSAA:  [color, depth]
   auto depth_view = m_depth_buffer ? m_depth_buffer->combined_view() : VK_NULL_HANDLE;
 
   for (uint32_t i = 0; i < count; ++i)
   {
     std::vector<vk::ImageView> attachments;
-    attachments.push_back(color_views[i]);
-    if (depth_view)
-      attachments.push_back(depth_view);
+    if (msaa)
+    {
+      attachments.push_back(m_msaa_images[i].image_view()); // attachment 0: MSAA color
+      if (depth_view)
+        attachments.push_back(depth_view);                   // attachment 1: depth
+      attachments.push_back(color_views[i]);                 // attachment 2: resolve target
+    }
+    else
+    {
+      attachments.push_back(color_views[i]);                 // attachment 0: color
+      if (depth_view)
+        attachments.push_back(depth_view);                   // attachment 1: depth
+    }
 
     vk::FramebufferCreateInfo fb_info{};
     fb_info.renderPass = m_renderpass;
@@ -311,6 +352,7 @@ void ExecutionGroup::destroy_frame_resources()
     group.clear();
   m_descriptor_sets.clear();
   m_buffers.clear();
+  m_msaa_images.clear();
   m_depth_buffer.reset();
 
   // Then base class destroys command pools, present semaphores, timeline tracking

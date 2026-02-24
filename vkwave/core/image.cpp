@@ -9,9 +9,14 @@ namespace vkwave
 {
 
 Image::Image(const Device& device, vk::Format format, vk::Extent2D extent,
-  vk::ImageUsageFlags usage, const std::string& name)
+  vk::ImageUsageFlags usage, const std::string& name,
+  vk::SampleCountFlagBits samples)
   : m_device(device.device()), m_format(format), m_extent(extent)
 {
+  // Multisample images are transient (content discarded after resolve)
+  if (samples != vk::SampleCountFlagBits::e1)
+    usage |= vk::ImageUsageFlagBits::eTransientAttachment;
+
   // Create image
   vk::ImageCreateInfo image_info{};
   image_info.imageType = vk::ImageType::e2D;
@@ -23,7 +28,7 @@ Image::Image(const Device& device, vk::Format format, vk::Extent2D extent,
   image_info.initialLayout = vk::ImageLayout::eUndefined;
   image_info.usage = usage;
   image_info.sharingMode = vk::SharingMode::eExclusive;
-  image_info.samples = vk::SampleCountFlagBits::e1;
+  image_info.samples = samples;
 
   m_image = m_device.createImage(image_info);
 

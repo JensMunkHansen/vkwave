@@ -31,6 +31,7 @@ private:
   vk::Extent2D m_extent{};
   vk::SwapchainKHR m_swapchain{ nullptr };
   vk::PresentModeKHR m_present_mode{ vk::PresentModeKHR::eFifo };
+  std::vector<vk::PresentModeKHR> m_available_present_modes;
 
   //  std::unique_ptr<Semaphore> m_img_available;
   [[nodiscard]] std::vector<vk::Image> get_swapchain_images();
@@ -94,5 +95,9 @@ public:
   [[nodiscard]] const std::vector<vk::Image>& images() const { return m_imgs; }
   [[nodiscard]] const vk::SwapchainKHR* swapchain() const { return &m_swapchain; }
   [[nodiscard]] vk::PresentModeKHR present_mode() const { return m_present_mode; }
+  [[nodiscard]] const std::vector<vk::PresentModeKHR>& available_present_modes() const
+  {
+    return m_available_present_modes;
+  }
 };
 };

@@ -9,6 +9,9 @@
 #include <vkwave/core/windowsurface.h>
 #include <vkwave/pipeline/render_graph.h>
 
+#include <chrono>
+#include <cstdint>
+
 /// Vulkan infrastructure: window, instance, device, swapchain, render graph.
 struct Engine
 {
@@ -29,6 +32,9 @@ struct Engine
   /// Check and handle pending resize. Returns true if resize occurred.
   bool handle_resize();
 
+  /// Tick FPS counter, update window title every 0.5s. Returns current average FPS.
+  double update_fps();
+
   void poll() { vkwave::Window::poll(); }
   [[nodiscard]] bool should_close() const { return window.should_close(); }
   [[nodiscard]] bool frame_limit_reached() const
@@ -41,4 +47,8 @@ struct Engine
 
 private:
   vkwave::Device create_device(const std::string& preferred_gpu);
+
+  std::chrono::steady_clock::time_point m_fps_time{ std::chrono::steady_clock::now() };
+  uint64_t m_fps_frames{ 0 };
+  double m_avg_fps{ 0.0 };
 };

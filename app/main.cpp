@@ -7,12 +7,9 @@
 #include <vulkan/vulkan_to_string.hpp>
 
 #include <spdlog/spdlog.h>
-#include <spdlog/fmt/fmt.h>
 
-#include <chrono>
 #include <csignal>
 #include <cstdlib>
-#include <filesystem>
 
 // ---------------------------------------------------------------------------
 // GLFW callback context — shared user pointer for all callbacks
@@ -102,25 +99,9 @@ int main(int argc, char** argv)
   spdlog::info("Present mode: {}", vk::to_string(app.swapchain.present_mode()));
   spdlog::info("Display refresh rate: {} Hz", app.window.refresh_rate());
 
-  auto fps_time = std::chrono::steady_clock::now();
-  uint64_t fps_frames = 0;
-  double avg_fps = 0.0;
-
   while (!app.should_close() && !app.frame_limit_reached())
   {
     app.poll();
-
-    // Update averaged FPS (title bar + ImGui)
-    ++fps_frames;
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration<double>(now - fps_time).count();
-    if (elapsed >= 0.5)
-    {
-      avg_fps = fps_frames / elapsed;
-      app.window.set_title(fmt::format("{} — {:.0f} fps", config.window_title, avg_fps));
-      fps_frames = 0;
-      fps_time = now;
-    }
 
     if (app.handle_resize())
     {
@@ -128,109 +109,9 @@ int main(int argc, char** argv)
       continue;
     }
 
+    double avg_fps = app.update_fps();
     scene.update(app.graph);
-
-    scene.imgui->new_frame();
-    ImGui::Begin("vkwave");
-    ImGui::Text("%.0f fps", avg_fps);
-    ImGui::Separator();
-
-    // PBR debug modes
-    const char* debug_modes[] = {
-      "Final", "Normals", "Base Color", "Metallic",
-      "Roughness", "AO", "Emissive"
-    };
-    ImGui::Combo("Debug Mode", &scene.pbr_ctx.debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
-
-    // Tonemapping
-    ImGui::Separator();
-    const char* tonemap_modes[] = {
-      "None", "Reinhard", "ACES (Fast)", "ACES (Hill)",
-      "ACES + Boost", "Khronos PBR Neutral"
-    };
-    ImGui::Combo("Tonemap", &scene.composite_pass.tonemap_mode, tonemap_modes, IM_ARRAYSIZE(tonemap_modes));
-    ImGui::SliderFloat("Exposure", &scene.composite_pass.exposure, 0.1f, 5.0f);
-
-    // IBL environment
-    if (!app.config.hdr_paths.empty())
-    {
-      ImGui::Separator();
-      ImGui::Text("Environment");
-      auto current_label = (scene.current_hdr_index >= 0
-            && scene.current_hdr_index < static_cast<int>(app.config.hdr_paths.size()))
-          ? std::filesystem::path(app.config.hdr_paths[scene.current_hdr_index]).stem().string()
-          : std::string("neutral");
-      if (ImGui::BeginCombo("HDR", current_label.c_str()))
-      {
-        for (int i = 0; i < static_cast<int>(app.config.hdr_paths.size()); ++i)
-        {
-          auto label = std::filesystem::path(app.config.hdr_paths[i]).stem().string();
-          bool selected = (i == scene.current_hdr_index);
-          if (ImGui::Selectable(label.c_str(), selected))
-          {
-            if (i != scene.current_hdr_index)
-            {
-              scene.switch_ibl(app.config.hdr_paths[i]);
-              scene.current_hdr_index = i;
-            }
-          }
-          if (selected)
-            ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-      }
-    }
-
-    // Model selection
-    if (!app.config.model_paths.empty())
-    {
-      ImGui::Separator();
-      ImGui::Text("Model");
-      auto model_label = (scene.current_model_index >= 0
-            && scene.current_model_index < static_cast<int>(app.config.model_paths.size()))
-          ? std::filesystem::path(app.config.model_paths[scene.current_model_index]).stem().string()
-          : std::string("cube");
-      if (ImGui::BeginCombo("Model", model_label.c_str()))
-      {
-        for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
-        {
-          auto label = std::filesystem::path(app.config.model_paths[i]).stem().string();
-          bool selected = (i == scene.current_model_index);
-          if (ImGui::Selectable(label.c_str(), selected))
-          {
-            if (i != scene.current_model_index)
-            {
-              scene.switch_model(app.config.model_paths[i]);
-              scene.current_model_index = i;
-            }
-          }
-          if (selected)
-            ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-      }
-    }
-
-    // Light controls
-    ImGui::Separator();
-    ImGui::Text("Directional Light");
-    ImGui::SliderFloat3("Direction", &scene.pbr_ctx.light_direction.x, -1.0f, 1.0f);
-    ImGui::SliderFloat("Intensity", &scene.pbr_ctx.light_intensity, 0.0f, 10.0f);
-    ImGui::ColorEdit3("Light Color", &scene.pbr_ctx.light_color.x);
-
-    // Feature toggles
-    ImGui::Separator();
-    ImGui::Text("Features");
-    ImGui::Checkbox("Normal Mapping", &scene.pbr_ctx.enable_normal_mapping);
-    ImGui::Checkbox("Emissive", &scene.pbr_ctx.enable_emissive);
-
-    // Material overrides (legacy single-draw path)
-    ImGui::Separator();
-    ImGui::Text("Material Overrides");
-    ImGui::SliderFloat("Metallic", &scene.pbr_pass.metallic_factor, 0.0f, 1.0f);
-    ImGui::SliderFloat("Roughness", &scene.pbr_pass.roughness_factor, 0.0f, 1.0f);
-
-    ImGui::End();
+    scene.draw_ui(app, avg_fps);
 
     if (!app.render_frame())
     {

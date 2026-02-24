@@ -2,6 +2,7 @@
 
 #include <vkwave/config.h>
 
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
 #include <span>
@@ -37,6 +38,21 @@ Engine::~Engine()
 bool Engine::render_frame()
 {
   return graph.render_frame(swapchain);
+}
+
+double Engine::update_fps()
+{
+  ++m_fps_frames;
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration<double>(now - m_fps_time).count();
+  if (elapsed >= 0.5)
+  {
+    m_avg_fps = m_fps_frames / elapsed;
+    window.set_title(fmt::format("{} — {:.0f} fps", config.window_title, m_avg_fps));
+    m_fps_frames = 0;
+    m_fps_time = now;
+  }
+  return m_avg_fps;
 }
 
 bool Engine::handle_resize()

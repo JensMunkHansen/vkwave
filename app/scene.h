@@ -64,6 +64,9 @@ struct Scene
   /// Update per-frame pass state (aspect ratio, model matrix, time).
   void update(vkwave::RenderGraph& graph);
 
+  /// Draw the ImGui control panel. Called between imgui->new_frame() and render.
+  void draw_ui(Engine& engine, double avg_fps);
+
   /// Switch to a different HDR environment. Drains GPU, creates new IBL,
   /// rewrites descriptors. Empty path = default neutral IBL.
   void switch_ibl(const std::string& hdr_path);
@@ -77,6 +80,12 @@ struct Scene
 
   /// Index into config.hdr_paths for the currently loaded IBL (-1 = neutral).
   int current_hdr_index{ 0 };
+
+  /// Current MSAA sample count for the PBR pass (e1 = off).
+  vk::SampleCountFlagBits msaa_samples{ vk::SampleCountFlagBits::e1 };
+
+  /// Rebuild render passes and pipelines when MSAA changes.
+  void rebuild_pipeline(vk::SampleCountFlagBits new_samples);
 
 private:
   Engine* m_engine;

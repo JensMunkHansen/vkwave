@@ -23,8 +23,11 @@ public:
   /// @param extent  Image dimensions.
   /// @param usage   Usage flags (e.g. eColorAttachment | eSampled).
   /// @param name    Debug name.
+  /// @param samples MSAA sample count (default e1). When multisample,
+  ///                eTransientAttachment is added automatically.
   Image(const Device& device, vk::Format format, vk::Extent2D extent,
-    vk::ImageUsageFlags usage, const std::string& name);
+    vk::ImageUsageFlags usage, const std::string& name,
+    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1);
 
   ~Image();
 

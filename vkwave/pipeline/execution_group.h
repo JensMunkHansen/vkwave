@@ -2,6 +2,7 @@
 
 #include <vkwave/core/buffer.h>
 #include <vkwave/core/depth_stencil_attachment.h>
+#include <vkwave/core/image.h>
 #include <vkwave/pipeline/shader_reflection.h>
 #include <vkwave/pipeline/submission_group.h>
 
@@ -51,12 +52,17 @@ class ExecutionGroup : public SubmissionGroup
   bool m_depth_enabled{ false };
   bool m_owns_renderpass{ true };
   vk::Format m_depth_format{ vk::Format::eD32Sfloat };
+  vk::SampleCountFlagBits m_msaa_samples{ vk::SampleCountFlagBits::e1 };
+  vk::Format m_color_format{}; // format of offscreen color images (for MSAA)
 
   // Reflected descriptor set info (stored at construction for auto-creating UBOs)
   std::vector<DescriptorSetInfo> m_reflected_sets;
 
   // Depth buffer (owned, size-dependent — created/destroyed with frame resources)
   std::unique_ptr<DepthStencilAttachment> m_depth_buffer;
+
+  // MSAA color images (transient, only created when m_msaa_samples > e1)
+  std::vector<Image> m_msaa_images;
 
   // Ring-buffered managed buffers (auto-created from reflection)
   std::vector<BufferSpec> m_buffer_specs;

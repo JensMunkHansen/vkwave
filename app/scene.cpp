@@ -5,9 +5,14 @@
 #include <vkwave/core/swapchain.h>
 #include <vkwave/pipeline/pipeline.h>
 
+#include <vulkan/vulkan_to_string.hpp>
+
+#include <imgui.h>
+
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <filesystem>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -220,7 +225,7 @@ Scene::Scene(Engine& app)
 
   // Create render passes (owned by Scene, shared with ExecutionGroups)
   scene_renderpass = vkwave::make_scene_renderpass(
-    app.device.device(), kHdrFormat, vk::Format::eD32Sfloat, kDebug);
+    app.device.device(), kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
   composite_renderpass = vkwave::make_composite_renderpass(
     app.device.device(), app.swapchain.image_format(), kDebug);
 
@@ -230,6 +235,7 @@ Scene::Scene(Engine& app)
   // PBR pass: renders to offscreen HDR image
   auto pbr_spec = vkwave::PBRPass::pipeline_spec();
   pbr_spec.existing_renderpass = scene_renderpass;
+  pbr_spec.msaa_samples = msaa_samples;
 
   // One HDR image per offscreen slot -- eliminates WAW hazard
   const uint32_t os_depth = app.swapchain.image_count();
@@ -460,6 +466,69 @@ void Scene::switch_model(const std::string& model_path)
   write_pbr_descriptors(pbr_group);
 }
 
+void Scene::rebuild_pipeline(vk::SampleCountFlagBits new_samples)
+{
+  msaa_samples = new_samples;
+
+  m_engine->graph.drain();
+
+  // Capture extent before destroying (the new group starts with zero extent)
+  auto& old_group = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
+  const auto extent = old_group.extent();
+  old_group.destroy_frame_resources();
+
+  // Destroy old scene render pass
+  auto dev = m_engine->device.device();
+  if (scene_renderpass)
+  {
+    dev.destroyRenderPass(scene_renderpass);
+    scene_renderpass = VK_NULL_HANDLE;
+  }
+
+  // Create new scene render pass with updated MSAA
+  scene_renderpass = vkwave::make_scene_renderpass(
+    dev, kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
+
+  // Create new PBR pipeline spec with updated render pass + MSAA
+  auto pbr_spec = vkwave::PBRPass::pipeline_spec();
+  pbr_spec.existing_renderpass = scene_renderpass;
+  pbr_spec.msaa_samples = msaa_samples;
+
+  // Replace the offscreen group (new pipeline + render pass reference)
+  auto& pbr_group = m_engine->graph.replace_offscreen_group(
+    0, "pbr", pbr_spec, kHdrFormat, kDebug);
+
+  // Rewire context + record function
+  pbr_ctx.group = &pbr_group;
+  pbr_group.set_record_fn([this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
+    pbr_pass.record(cmd);
+    blend_pass.record(cmd);
+  });
+
+  // Update color views from existing HDR images
+  const uint32_t os_depth = m_engine->graph.offscreen_depth();
+  std::vector<vk::ImageView> hdr_views;
+  hdr_views.reserve(os_depth);
+  for (uint32_t i = 0; i < os_depth; ++i)
+    hdr_views.push_back(hdr_images[i].image_view());
+  pbr_group.set_color_views(hdr_views);
+
+  // Set descriptor counts
+  uint32_t mat_count = gltf_scene.mesh && !gltf_scene.materials.empty()
+    ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
+  pbr_group.set_descriptor_count(1, mat_count);
+  pbr_group.set_descriptor_count(2, 1);
+
+  // Rebuild frame resources for this group
+  pbr_group.create_frame_resources(extent, os_depth);
+
+  // Rewrite descriptors
+  write_pbr_descriptors(pbr_group);
+
+  spdlog::info("MSAA changed to {}x",
+    static_cast<int>(msaa_samples));
+}
+
 void Scene::resize(const vkwave::Swapchain& swapchain)
 {
   if (imgui)
@@ -485,4 +554,202 @@ void Scene::update(vkwave::RenderGraph& graph)
   pbr_ctx.view_projection = camera.view_projection_matrix();
   pbr_ctx.cam_position = camera.position();
   pbr_ctx.time = graph.elapsed_time();
+}
+
+// ---------------------------------------------------------------------------
+// ImGui control panel
+// ---------------------------------------------------------------------------
+
+void Scene::draw_ui(Engine& app, double avg_fps)
+{
+  imgui->new_frame();
+  ImGui::Begin("vkwave");
+  ImGui::Text("%.0f fps", avg_fps);
+  ImGui::Separator();
+
+  // Display settings
+  if (ImGui::CollapsingHeader("Display"))
+  {
+    static constexpr struct { vk::PresentModeKHR mode; const char* label; } present_mode_table[] = {
+      { vk::PresentModeKHR::eImmediate,    "Immediate (no VSync)" },
+      { vk::PresentModeKHR::eMailbox,       "Mailbox (triple buffer)" },
+      { vk::PresentModeKHR::eFifo,          "FIFO (VSync)" },
+      { vk::PresentModeKHR::eFifoRelaxed,   "FIFO Relaxed" },
+    };
+
+    auto current_mode = app.swapchain.present_mode();
+    const char* current_label = vk::to_string(current_mode).c_str();
+    for (const auto& entry : present_mode_table)
+      if (entry.mode == current_mode) { current_label = entry.label; break; }
+
+    if (ImGui::BeginCombo("Present Mode", current_label))
+    {
+      for (const auto& entry : present_mode_table)
+      {
+        auto& avail = app.swapchain.available_present_modes();
+        if (std::find(avail.begin(), avail.end(), entry.mode) == avail.end())
+          continue;
+
+        bool selected = (entry.mode == current_mode);
+        if (ImGui::Selectable(entry.label, selected))
+        {
+          if (entry.mode != current_mode)
+          {
+            app.graph.drain();
+            app.swapchain.set_preferred_present_mode(entry.mode);
+            app.swapchain.recreate(app.window.width(), app.window.height());
+            app.graph.resize(app.swapchain);
+            resize(app.swapchain);
+
+            bool fifo = (entry.mode == vk::PresentModeKHR::eFifo
+                      || entry.mode == vk::PresentModeKHR::eFifoRelaxed);
+            if (fifo)
+              app.graph.present_group().set_gating(vkwave::GatingMode::always);
+            else
+            {
+              float refresh = static_cast<float>(app.window.refresh_rate());
+              if (refresh > 0.0f)
+                app.graph.present_group().set_gating(vkwave::GatingMode::wall_clock, refresh);
+            }
+
+            spdlog::info("Present mode changed to {}", vk::to_string(entry.mode));
+          }
+        }
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+
+    // MSAA toggle
+    static constexpr struct { vk::SampleCountFlagBits samples; const char* label; } msaa_table[] = {
+      { vk::SampleCountFlagBits::e1, "Off" },
+      { vk::SampleCountFlagBits::e2, "2x" },
+      { vk::SampleCountFlagBits::e4, "4x" },
+      { vk::SampleCountFlagBits::e8, "8x" },
+    };
+
+    auto max_samples = app.device.max_usable_sample_count();
+    auto current_samples = msaa_samples;
+    const char* msaa_label = "Off";
+    for (const auto& entry : msaa_table)
+      if (entry.samples == current_samples) { msaa_label = entry.label; break; }
+
+    if (ImGui::BeginCombo("MSAA", msaa_label))
+    {
+      for (const auto& entry : msaa_table)
+      {
+        if (static_cast<uint32_t>(entry.samples) > static_cast<uint32_t>(max_samples))
+          continue;
+
+        bool selected = (entry.samples == current_samples);
+        if (ImGui::Selectable(entry.label, selected))
+        {
+          if (entry.samples != current_samples)
+            rebuild_pipeline(entry.samples);
+        }
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+  }
+  ImGui::Separator();
+
+  // PBR debug modes
+  const char* debug_modes[] = {
+    "Final", "Normals", "Base Color", "Metallic",
+    "Roughness", "AO", "Emissive"
+  };
+  ImGui::Combo("Debug Mode", &pbr_ctx.debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
+
+  // Tonemapping
+  ImGui::Separator();
+  const char* tonemap_modes[] = {
+    "None", "Reinhard", "ACES (Fast)", "ACES (Hill)",
+    "ACES + Boost", "Khronos PBR Neutral"
+  };
+  ImGui::Combo("Tonemap", &composite_pass.tonemap_mode, tonemap_modes, IM_ARRAYSIZE(tonemap_modes));
+  ImGui::SliderFloat("Exposure", &composite_pass.exposure, 0.1f, 5.0f);
+
+  // IBL environment
+  if (!app.config.hdr_paths.empty())
+  {
+    ImGui::Separator();
+    ImGui::Text("Environment");
+    auto hdr_label = (current_hdr_index >= 0
+          && current_hdr_index < static_cast<int>(app.config.hdr_paths.size()))
+        ? std::filesystem::path(app.config.hdr_paths[current_hdr_index]).stem().string()
+        : std::string("neutral");
+    if (ImGui::BeginCombo("HDR", hdr_label.c_str()))
+    {
+      for (int i = 0; i < static_cast<int>(app.config.hdr_paths.size()); ++i)
+      {
+        auto label = std::filesystem::path(app.config.hdr_paths[i]).stem().string();
+        bool selected = (i == current_hdr_index);
+        if (ImGui::Selectable(label.c_str(), selected))
+        {
+          if (i != current_hdr_index)
+          {
+            switch_ibl(app.config.hdr_paths[i]);
+            current_hdr_index = i;
+          }
+        }
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+  }
+
+  // Model selection
+  if (!app.config.model_paths.empty())
+  {
+    ImGui::Separator();
+    ImGui::Text("Model");
+    auto model_label = (current_model_index >= 0
+          && current_model_index < static_cast<int>(app.config.model_paths.size()))
+        ? std::filesystem::path(app.config.model_paths[current_model_index]).stem().string()
+        : std::string("cube");
+    if (ImGui::BeginCombo("Model", model_label.c_str()))
+    {
+      for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
+      {
+        auto label = std::filesystem::path(app.config.model_paths[i]).stem().string();
+        bool selected = (i == current_model_index);
+        if (ImGui::Selectable(label.c_str(), selected))
+        {
+          if (i != current_model_index)
+          {
+            switch_model(app.config.model_paths[i]);
+            current_model_index = i;
+          }
+        }
+        if (selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+  }
+
+  // Light controls
+  ImGui::Separator();
+  ImGui::Text("Directional Light");
+  ImGui::SliderFloat3("Direction", &pbr_ctx.light_direction.x, -1.0f, 1.0f);
+  ImGui::SliderFloat("Intensity", &pbr_ctx.light_intensity, 0.0f, 10.0f);
+  ImGui::ColorEdit3("Light Color", &pbr_ctx.light_color.x);
+
+  // Feature toggles
+  ImGui::Separator();
+  ImGui::Text("Features");
+  ImGui::Checkbox("Normal Mapping", &pbr_ctx.enable_normal_mapping);
+  ImGui::Checkbox("Emissive", &pbr_ctx.enable_emissive);
+
+  // Material overrides (legacy single-draw path)
+  ImGui::Separator();
+  ImGui::Text("Material Overrides");
+  ImGui::SliderFloat("Metallic", &pbr_pass.metallic_factor, 0.0f, 1.0f);
+  ImGui::SliderFloat("Roughness", &pbr_pass.roughness_factor, 0.0f, 1.0f);
+
+  ImGui::End();
 }

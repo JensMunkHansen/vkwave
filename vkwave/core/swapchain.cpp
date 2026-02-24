@@ -238,9 +238,9 @@ void Swapchain::setup_swapchain(
   const vk::Extent2D requested_extent{ width, height };
 
   // Display the supported present modes
-  auto presentModes = m_device.physicalDevice().getSurfacePresentModesKHR(m_surface);
+  m_available_present_modes = m_device.physicalDevice().getSurfacePresentModesKHR(m_surface);
   spdlog::trace("supported present modes");
-  for (vk::PresentModeKHR presentMode : presentModes)
+  for (vk::PresentModeKHR presentMode : m_available_present_modes)
   {
     spdlog::trace("\t {}", utils::log_present_mode(presentMode));
   }
@@ -323,9 +323,9 @@ void Swapchain::setup_swapchain(
   // Present modes
   if (m_preferred_present_mode.has_value())
   {
-    auto available = m_device.physicalDevice().getSurfacePresentModesKHR(m_surface);
-    auto it = std::find(available.begin(), available.end(), *m_preferred_present_mode);
-    if (it != available.end())
+    auto it = std::find(m_available_present_modes.begin(), m_available_present_modes.end(),
+      *m_preferred_present_mode);
+    if (it != m_available_present_modes.end())
     {
       createInfo.presentMode = *m_preferred_present_mode;
       spdlog::info("Using preferred present mode: {}", vk::to_string(createInfo.presentMode));
@@ -333,7 +333,7 @@ void Swapchain::setup_swapchain(
     else
     {
       createInfo.presentMode =
-        choose_present_mode(available, default_present_mode_priorities, vsync_enabled);
+        choose_present_mode(m_available_present_modes, default_present_mode_priorities, vsync_enabled);
       spdlog::warn("Preferred present mode {} not available, falling back to {}",
         vk::to_string(*m_preferred_present_mode), vk::to_string(createInfo.presentMode));
     }
@@ -341,7 +341,7 @@ void Swapchain::setup_swapchain(
   else
   {
     createInfo.presentMode =
-      choose_present_mode(m_device.physicalDevice().getSurfacePresentModesKHR(m_surface),
+      choose_present_mode(m_available_present_modes,
         default_present_mode_priorities, vsync_enabled);
   }
 

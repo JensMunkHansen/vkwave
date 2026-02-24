@@ -75,6 +75,14 @@ public:
                                        vk::Format color_format,
                                        bool debug);
 
+  /// Replace an existing offscreen group (destroys old, creates new).
+  /// The old group must already have its frame resources destroyed.
+  ExecutionGroup& replace_offscreen_group(size_t index,
+                                           const std::string& name,
+                                           const PipelineSpec& spec,
+                                           vk::Format color_format,
+                                           bool debug);
+
   /// Set the present group (renders to swapchain, does acquire/present).
   ExecutionGroup& set_present_group(const std::string& name,
                                      const PipelineSpec& spec,

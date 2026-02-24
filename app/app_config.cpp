@@ -84,6 +84,28 @@ AppConfig load_config(const std::string& path)
   return cfg;
 }
 
+/// Resolve config path: if not found at the given path, try next to the executable.
+static std::string resolve_config_path(const std::string& path, const char* argv0)
+{
+  if (std::filesystem::exists(path))
+    return path;
+
+  // Try next to the executable
+  std::error_code ec;
+  auto exe_dir = std::filesystem::canonical("/proc/self/exe", ec).parent_path();
+  if (ec)
+    exe_dir = std::filesystem::path(argv0).parent_path();
+
+  auto beside_exe = exe_dir / std::filesystem::path(path).filename();
+  if (std::filesystem::exists(beside_exe))
+  {
+    spdlog::info("Config not found at '{}', using '{}'", path, beside_exe.string());
+    return beside_exe.string();
+  }
+
+  return path; // let load_config() emit the warning
+}
+
 std::optional<AppConfig> load_config_with_cli(int argc, char** argv)
 {
   // First pass: extract --config path (and check for --help / --complete)
@@ -91,6 +113,8 @@ std::optional<AppConfig> load_config_with_cli(int argc, char** argv)
   std::string config_path = "vkwave.toml";
   if (!parse_cli(argc, argv, config, config_path))
     return std::nullopt;
+
+  config_path = resolve_config_path(config_path, argv[0]);
 
   // Load TOML config
   config = load_config(config_path);

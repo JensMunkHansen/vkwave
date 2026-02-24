@@ -34,6 +34,22 @@ ExecutionGroup& RenderGraph::add_offscreen_group(
   return ref;
 }
 
+ExecutionGroup& RenderGraph::replace_offscreen_group(
+  size_t index,
+  const std::string& name,
+  const PipelineSpec& spec,
+  vk::Format color_format,
+  bool debug)
+{
+  assert(index < m_offscreen_groups.size() && "offscreen group index out of range");
+  auto eg = std::make_unique<ExecutionGroup>(
+    m_device, name, spec, color_format, debug);
+  eg->set_signal_present(false);
+  auto& ref = *eg;
+  m_offscreen_groups[index] = std::move(eg);
+  return ref;
+}
+
 ExecutionGroup& RenderGraph::set_present_group(
   const std::string& name,
   const PipelineSpec& spec,
