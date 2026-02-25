@@ -25,6 +25,9 @@ PipelineSpec PBRPass::pipeline_spec()
   spec.fragment_shader = SHADER_DIR "pbr.frag";
   spec.vertex_bindings = { binding };
   spec.vertex_attributes = { attrs.begin(), attrs.end() };
+#if 0
+  spec.wireframe = true;
+#endif
   spec.backface_culling = true;
   spec.depth_test = true;
   spec.blend = true;

@@ -28,7 +28,8 @@ void ScenePipeline::create_hdr_images(vk::Extent2D extent, uint32_t count)
   for (uint32_t i = 0; i < count; ++i)
   {
     hdr_images.emplace_back(*m_engine->device, kHdrFormat, extent,
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled
+        | vk::ImageUsageFlagBits::eTransferSrc,
       fmt::format("hdr_image_{}", i));
   }
 }

@@ -92,6 +92,7 @@ public:
   [[nodiscard]] vk::Format image_format() const { return m_surface_format.value().format; }
 
   [[nodiscard]] const std::vector<vk::ImageView>& image_views() const { return m_img_views; }
+  [[nodiscard]] vk::Image image(uint32_t index) const { return m_imgs[index]; }
   [[nodiscard]] const std::vector<vk::Image>& images() const { return m_imgs; }
   [[nodiscard]] const vk::SwapchainKHR* swapchain() const { return &m_swapchain; }
   [[nodiscard]] vk::PresentModeKHR present_mode() const { return m_present_mode; }

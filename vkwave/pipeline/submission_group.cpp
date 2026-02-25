@@ -191,8 +191,9 @@ void SubmissionGroup::submit(
   submit.signalSemaphoreCount = static_cast<uint32_t>(signal_sems.size());
   submit.pSignalSemaphores = signal_sems.data();
 
-  // No fence — timeline semaphore handles CPU-GPU sync
-  queue.submit(submit, nullptr);
+  // Pass optional fence (e.g. for screenshot readback), then clear it
+  queue.submit(submit, m_next_fence);
+  m_next_fence = VK_NULL_HANDLE;
 }
 
 void SubmissionGroup::drain()

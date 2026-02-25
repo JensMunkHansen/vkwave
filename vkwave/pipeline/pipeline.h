@@ -37,6 +37,7 @@ struct GraphicsPipelineInBundle
 
   // Rasterizer options
   bool backfaceCulling{ true };
+  bool wireframe{ false };
   bool dynamicCullMode{ false };
   bool dynamicDepthWrite{ false };
 
@@ -110,6 +111,7 @@ struct PipelineSpec
   std::vector<vk::VertexInputAttributeDescription> vertex_attributes;
 
   bool backface_culling{ true };
+  bool wireframe{ false };
   bool depth_test{ false };
   bool depth_write{ true };
   vk::Format depth_format{ vk::Format::eD32Sfloat };

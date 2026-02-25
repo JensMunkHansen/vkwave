@@ -4,6 +4,7 @@ add_executable(vkwave_app
   scene.cpp
   scene_data.cpp
   scene_pipeline.cpp
+  screenshot.cpp
   input.cpp
   app_config.cpp
   cli.cpp
@@ -14,6 +15,8 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   sps_link_optimization(vkwave_app)
 endif()
 sps_copy_runtime_dlls(vkwave_app)
+
+target_include_directories(vkwave_app PRIVATE "${STB_INCLUDE_DIR}")
 
 target_link_libraries(vkwave_app
   PUBLIC

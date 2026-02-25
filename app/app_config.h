@@ -35,6 +35,7 @@ struct AppConfig
   uint64_t max_frames{ 0 };      // 0 = unlimited, >0 = exit after N frames
   bool shader_debug{ false };     // emit NonSemantic debug info (real variable names in RenderDoc)
   bool shader_optimize{ false };  // enable SPIR-V optimizer
+  std::string log_level;          // "trace", "debug", "info", "warn", "error" (empty = build default)
 };
 
 AppConfig load_config(const std::string& path);

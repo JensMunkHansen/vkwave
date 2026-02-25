@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "input.h"
 #include "scene.h"
+#include "screenshot.h"
 
 #include <vkwave/pipeline/shader_compiler.h>
 
@@ -8,8 +9,10 @@
 
 #include <vulkan/vulkan_to_string.hpp>
 
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 
@@ -57,6 +60,13 @@ int main(int argc, char** argv)
   if (!maybe_config)
     return EXIT_SUCCESS;
   auto config = std::move(*maybe_config);
+
+  // Override log level from config if specified
+  if (!config.log_level.empty())
+  {
+    auto lvl = spdlog::level::from_str(config.log_level);
+    spdlog::set_level(lvl);
+  }
 
 #ifndef _WIN32
   if (config.use_x11)
@@ -150,6 +160,17 @@ int main(int argc, char** argv)
     scene.update(*app.graph);
     scene.draw_ui(app, avg_fps);
 
+    // Grow readback buffer if needed (before render_frame so it's ready for post_record_fn)
+    if (scene.screenshot_requested && !scene.screenshot_in_flight && !scene.screenshot_compressing)
+    {
+      auto extent = app.swapchain->extent();
+      vk::DeviceSize needed = static_cast<vk::DeviceSize>(extent.width) * extent.height * 8;
+      scene.ensure_screenshot_readback(needed);
+
+      if (!scene.screenshot_fence)
+        scene.screenshot_fence = std::make_unique<vkwave::Fence>(*app.device, "screenshot_fence", true);
+    }
+
     if (!app.render_frame())
     {
       ImGui::EndFrame();
@@ -160,6 +181,42 @@ int main(int argc, char** argv)
     // When present was skipped (rate-gated), Render() wasn't called —
     // EndFrame() closes the ImGui frame. Safe to call after Render() too (no-op).
     ImGui::EndFrame();
+
+    // Poll screenshot fence — non-blocking, only the copy is serialized
+    if (scene.screenshot_in_flight)
+    {
+      if (scene.screenshot_fence->status() == vk::Result::eSuccess)
+      {
+        // GPU copy complete — spawn worker thread for PNG compression
+        scene.screenshot_in_flight = false;
+        scene.screenshot_compressing = true;
+
+        auto now = std::chrono::system_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          now.time_since_epoch()).count();
+        scene.screenshot_filename = fmt::format("screenshot_{}.png", ms);
+
+        auto* readback = scene.screenshot_readback.get();
+        auto format = scene.screenshot_format;
+        auto extent = scene.screenshot_extent;
+
+        if (scene.screenshot_thread.joinable())
+          scene.screenshot_thread.join();
+
+        scene.screenshot_thread = std::thread(
+          [readback, format, extent, &scene]() {
+            scene.screenshot_png = compress_screenshot(*readback, format, extent);
+            scene.screenshot_compressing = false;
+          });
+      }
+    }
+
+    // Write PNG on main thread (readback buffer is persistent — not freed)
+    if (!scene.screenshot_compressing && !scene.screenshot_png.empty())
+    {
+      write_screenshot(scene.screenshot_png, scene.screenshot_filename);
+      scene.screenshot_png.clear();
+    }
   }
 
   // Drain GPU before scene destroys its mesh buffers

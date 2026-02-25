@@ -86,6 +86,7 @@ ExecutionGroup::ExecutionGroup(
   bundle_in.swapchainExtent = vk::Extent2D{ 1, 1 }; // viewport/scissor are dynamic state
   bundle_in.swapchainImageFormat = swapchain_format;
   bundle_in.backfaceCulling = spec.backface_culling;
+  bundle_in.wireframe = spec.wireframe;
   bundle_in.depthTestEnabled = spec.depth_test;
   bundle_in.depthWriteEnabled = spec.depth_write;
   bundle_in.depthFormat = spec.depth_format;

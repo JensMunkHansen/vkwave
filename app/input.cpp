@@ -2,6 +2,8 @@
 
 #include <vkwave/core/camera.h>
 
+#include <imgui.h>
+
 void Input::on_cursor_pos(GLFWwindow* window, double xpos, double ypos)
 {
   if (!mouse_tracked)
@@ -16,6 +18,10 @@ void Input::on_cursor_pos(GLFWwindow* window, double xpos, double ypos)
   double dy = ypos - last_mouse_y;
   last_mouse_x = xpos;
   last_mouse_y = ypos;
+
+  // Let ImGui consume mouse input when hovering over its windows
+  if (ImGui::GetIO().WantCaptureMouse)
+    return;
 
   // Left drag — orbit
   if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS)
@@ -42,6 +48,9 @@ void Input::on_cursor_pos(GLFWwindow* window, double xpos, double ypos)
 
 void Input::on_scroll(double yoffset)
 {
+  if (ImGui::GetIO().WantCaptureMouse)
+    return;
+
   float factor = 1.0f + static_cast<float>(yoffset) * 0.1f;
   camera->dolly(factor);
 }

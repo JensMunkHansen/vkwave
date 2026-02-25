@@ -3,13 +3,18 @@
 #include "scene_data.h"
 #include "scene_pipeline.h"
 
+#include <vkwave/core/buffer.h>
+#include <vkwave/core/fence.h>
 #include <vkwave/pipeline/composite_pass.h>
 #include <vkwave/pipeline/pbr_pass.h>
 
 #include <vulkan/vulkan.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 
 struct Engine;
 namespace vkwave { class RenderGraph; class Swapchain; }
@@ -26,6 +31,20 @@ struct Scene
   vkwave::PBRPass pbr_pass{};
   vkwave::BlendPass blend_pass{};
   vkwave::CompositePass composite_pass{};
+
+  // Screenshot: captures from offscreen HDR image, fence-based polling,
+  // single grow-only HOST_VISIBLE readback buffer, worker thread for PNG.
+  bool screenshot_requested{ false };
+  bool screenshot_in_flight{ false };       // GPU copy submitted, fence not yet signaled
+  bool screenshot_compressing{ false };     // worker thread compressing PNG
+  // Serializes only the screenshot copy, not frames — GPU keeps pipelining.
+  std::unique_ptr<vkwave::Fence> screenshot_fence;
+  std::unique_ptr<vkwave::Buffer> screenshot_readback;  // HOST_VISIBLE, grow-only
+  vk::Extent2D screenshot_extent{};         // extent at capture time
+  vk::Format screenshot_format{};           // HDR format at capture time
+  std::thread screenshot_thread;
+  std::vector<uint8_t> screenshot_png;
+  std::string screenshot_filename;
 
   explicit Scene(Engine& engine);
   ~Scene();
@@ -54,6 +73,9 @@ struct Scene
 
   /// Rebuild render passes and pipelines when MSAA changes.
   void rebuild_pipeline(vk::SampleCountFlagBits new_samples);
+
+  /// Ensure HOST_VISIBLE readback buffer is large enough. Grow-only, never freed.
+  void ensure_screenshot_readback(vk::DeviceSize needed);
 
 private:
   Engine* m_engine;

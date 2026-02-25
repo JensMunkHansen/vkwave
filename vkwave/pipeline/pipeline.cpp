@@ -380,7 +380,7 @@ GraphicsPipelineOutBundle create_graphics_pipeline(
   rasterizer.flags = vk::PipelineRasterizationStateCreateFlags();
   rasterizer.depthClampEnable = VK_FALSE; // discard out of bounds fragments, don't clamp them
   rasterizer.rasterizerDiscardEnable = VK_FALSE; // This flag would disable fragment output
-  rasterizer.polygonMode = vk::PolygonMode::eFill;
+  rasterizer.polygonMode = specification.wireframe ? vk::PolygonMode::eLine : vk::PolygonMode::eFill;
   rasterizer.lineWidth = 1.0f;
   rasterizer.cullMode =
     specification.backfaceCulling ? vk::CullModeFlagBits::eBack : vk::CullModeFlagBits::eNone;

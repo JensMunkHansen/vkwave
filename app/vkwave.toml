@@ -22,3 +22,4 @@ use_x11 = false             # force X11 instead of Wayland
 [debug]
 shader_debug = true     # emit NonSemantic debug info (real variable names in RenderDoc/Nsight)
 shader_optimize = false # disable SPIR-V optimizer for debuggability
+log_level = "warn"      # "trace", "debug", "info", "warn", "error" (empty = build default)

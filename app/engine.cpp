@@ -100,6 +100,7 @@ vkwave::Device Engine::create_device(const std::string& preferred_gpu)
   std::span<const char*> ext_span(extensions);
 
   vk::PhysicalDeviceFeatures required_features{};
+  required_features.fillModeNonSolid = VK_TRUE;
 
   auto physical_device = vkwave::Device::pick_best_physical_device(
     instance, surface->get(), required_features, ext_span, preferred_gpu);

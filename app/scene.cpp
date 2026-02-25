@@ -1,5 +1,6 @@
 #include "scene.h"
 #include "engine.h"
+#include "screenshot.h"
 
 #include <vkwave/core/swapchain.h>
 
@@ -32,6 +33,8 @@ void Scene::build_pipeline()
 
 Scene::~Scene()
 {
+  if (screenshot_thread.joinable())
+    screenshot_thread.join();
   m_engine->device->device().waitIdle();
 }
 
@@ -82,11 +85,36 @@ void Scene::wire_record_callbacks()
       blend_pass.record(cmd);
     });
 
+  // PBR post-record: record HDR→buffer copy for screenshots.
+  // Runs after endRenderPass(), before cmd.end(), same command buffer.
+  pipeline->pbr_group().set_post_record_fn(
+    [this](vk::CommandBuffer cmd, uint32_t /*slot_index*/) {
+      if (!screenshot_requested || screenshot_in_flight || screenshot_compressing)
+        return;
+      if (!screenshot_readback)
+        return; // buffer not yet allocated — will be ready next frame
+
+      auto extent = pipeline->pbr_group().extent();
+      vk::DeviceSize needed = static_cast<vk::DeviceSize>(extent.width) * extent.height * 8;
+      if (screenshot_readback->size() < needed)
+        return; // buffer too small — will grow next frame
+
+      auto slot = m_engine->graph->last_offscreen_slot();
+      auto& hdr_img = pipeline->hdr_images[slot];
+      record_hdr_screenshot_copy(cmd, hdr_img.image(), extent, screenshot_readback->buffer());
+
+      // Arm the fence — only this copy is serialized, frames keep pipelining
+      screenshot_fence->reset();
+      pipeline->pbr_group().set_next_fence(screenshot_fence->get());
+
+      screenshot_requested = false;
+      screenshot_in_flight = true;
+      screenshot_extent = extent;
+      screenshot_format = ScenePipeline::kHdrFormat;
+    });
+
   pipeline->composite_group().set_record_fn(
     [this](vk::CommandBuffer cmd, uint32_t frame_index) {
-      // Update descriptor to sample from the latest offscreen HDR image.
-      // begin_frame() already waited for this slot's previous use, so the
-      // descriptor set is safe to update.
       auto slot = m_engine->graph->last_offscreen_slot();
       pipeline->composite_group().write_image_descriptor(
         0, "hdrImage", frame_index,
@@ -94,6 +122,7 @@ void Scene::wire_record_callbacks()
       composite_pass.record(cmd);
     });
 
+  // Composite post-record: ImGui overlay only
   auto* overlay = pipeline->imgui_overlay();
   pipeline->composite_group().set_post_record_fn(
     [overlay](vk::CommandBuffer cmd, uint32_t slot) {
@@ -131,6 +160,22 @@ void Scene::rebuild_pipeline(vk::SampleCountFlagBits new_samples)
 void Scene::resize(const vkwave::Swapchain& swapchain)
 {
   pipeline->resize(swapchain, data);
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot readback buffer (grow-only, persistent)
+// ---------------------------------------------------------------------------
+
+void Scene::ensure_screenshot_readback(vk::DeviceSize needed)
+{
+  if (screenshot_readback && screenshot_readback->size() >= needed)
+    return;
+
+  // Grow-only: old buffer is not in use (fence was signaled or never used).
+  screenshot_readback = std::make_unique<vkwave::Buffer>(
+    *m_engine->device, "screenshot readback", needed,
+    vk::BufferUsageFlagBits::eTransferDst,
+    vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +386,18 @@ void Scene::draw_ui(Engine& app, double avg_fps)
   ImGui::Text("Material Overrides");
   ImGui::SliderFloat("Metallic", &pbr_pass.metallic_factor, 0.0f, 1.0f);
   ImGui::SliderFloat("Roughness", &pbr_pass.roughness_factor, 0.0f, 1.0f);
+
+  ImGui::Separator();
+  if (screenshot_requested || screenshot_in_flight || screenshot_compressing)
+  {
+    ImGui::BeginDisabled();
+    ImGui::Button("Screenshot (saving...)");
+    ImGui::EndDisabled();
+  }
+  else if (ImGui::Button("Screenshot"))
+  {
+    screenshot_requested = true;
+  }
 
   ImGui::End();
 }

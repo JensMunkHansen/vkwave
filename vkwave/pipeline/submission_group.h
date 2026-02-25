@@ -103,6 +103,10 @@ public:
   /// Offscreen groups should set this to false (nothing consumes them).
   void set_signal_present(bool b) { m_signal_binary_present = b; }
 
+  /// Set a fence to be signaled on the next submit() call only.
+  /// The fence is automatically cleared (reset to VK_NULL_HANDLE) after submission.
+  void set_next_fence(vk::Fence fence) { m_next_fence = fence; }
+
   /// Get the timeline semaphore handle (for inter-group synchronization).
   [[nodiscard]] vk::Semaphore timeline_semaphore() const;
 
@@ -139,6 +143,9 @@ private:
   // Binary present semaphores (one per slot, for WSI)
   std::vector<std::unique_ptr<Semaphore>> m_present_semaphores;
   bool m_signal_binary_present{ true };
+
+  // Optional fence for next submit (screenshot capture, etc.)
+  vk::Fence m_next_fence{ VK_NULL_HANDLE };
 
   // Gating
   GatingMode m_gating{ GatingMode::always };

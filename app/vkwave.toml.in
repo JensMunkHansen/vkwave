@@ -12,6 +12,7 @@ model_paths = [
     "@CMAKE_SOURCE_DIR@/data/AlphaBlendModeTest/glTF-Binary/AlphaBlendModeTest.glb",
     "@CMAKE_SOURCE_DIR@/data/CompareMetallic/glTF-Binary/CompareMetallic.glb",
     "@CMAKE_SOURCE_DIR@/data/ScatteringSkull/glTF-Binary/ScatteringSkull.glb",
+    "@CMAKE_SOURCE_DIR@/localdata/LowerJawScan/LowerJawScan.gltf",
 ]
 hdr_path = "@CMAKE_SOURCE_DIR@/data/footprint_court.hdr"
 hdr_paths = [
