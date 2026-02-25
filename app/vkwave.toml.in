@@ -2,7 +2,7 @@ title = "vkwave"
 
 [vulkan]
 preferred_gpu = "NVIDIA"    # partial name match, "" for auto-select
-present_mode = "mailbox"    # "immediate", "mailbox", "fifo", "fifo_relaxed"
+present_mode = "fifo"       # "immediate", "mailbox", "fifo", "fifo_relaxed"
 swapchain_images = 10       # 0 = driver default (minImageCount + 1)
 
 [scene]

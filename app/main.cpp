@@ -107,7 +107,7 @@ int main(int argc, char** argv)
 
   glfwSetScrollCallback(app.window.get(), [](GLFWwindow* w, double /*xoffset*/, double yoffset) {
     auto* c = static_cast<Callbacks*>(glfwGetWindowUserPointer(w));
-    c->input->on_scroll(yoffset);
+    c->input->on_scroll(w, yoffset);
   });
 
   Scene scene(app);
@@ -132,8 +132,18 @@ int main(int argc, char** argv)
   if (scene.data.current_hdr_index < 0 && !app.config.hdr_paths.empty())
     scene.data.current_hdr_index = 0;
 
-  scene.data.camera.set_position(0.0f, 1.5f, 3.0f);
-  scene.data.camera.set_focal_point(0.0f, 0.0f, 0.0f);
+  // Fit camera to loaded model bounds
+  if (scene.data.gltf_scene.bounds.valid())
+  {
+    float bounds[6];
+    scene.data.gltf_scene.bounds.to_bounds(bounds);
+    scene.data.camera.reset_camera(bounds);
+  }
+  else
+  {
+    scene.data.camera.set_position(0.0f, 1.5f, 3.0f);
+    scene.data.camera.set_focal_point(0.0f, 0.0f, 0.0f);
+  }
   scene.data.camera.set_aspect_ratio(
     static_cast<float>(app.swapchain->extent().width) /
     static_cast<float>(app.swapchain->extent().height));

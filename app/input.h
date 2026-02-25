@@ -20,5 +20,5 @@ struct Input
   void on_cursor_pos(GLFWwindow* window, double xpos, double ypos);
 
   /// Called from scroll callback.
-  void on_scroll(double yoffset);
+  void on_scroll(GLFWwindow* window, double yoffset);
 };

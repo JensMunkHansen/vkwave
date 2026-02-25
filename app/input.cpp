@@ -19,7 +19,8 @@ void Input::on_cursor_pos(GLFWwindow* window, double xpos, double ypos)
   last_mouse_x = xpos;
   last_mouse_y = ypos;
 
-  // Let ImGui consume mouse input when hovering over its windows
+  // Let ImGui consume mouse input when hovering over its windows.
+  // Position tracking above must still update to avoid a delta jump on release.
   if (ImGui::GetIO().WantCaptureMouse)
     return;
 
@@ -46,11 +47,17 @@ void Input::on_cursor_pos(GLFWwindow* window, double xpos, double ypos)
   }
 }
 
-void Input::on_scroll(double yoffset)
+void Input::on_scroll(GLFWwindow* window, double yoffset)
 {
   if (ImGui::GetIO().WantCaptureMouse)
     return;
 
   float factor = 1.0f + static_cast<float>(yoffset) * 0.1f;
-  camera->dolly(factor);
+
+  // Ctrl+scroll = zoom (FOV), plain scroll = dolly (position)
+  if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS
+      || glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
+    camera->zoom(factor);
+  else
+    camera->dolly(factor);
 }

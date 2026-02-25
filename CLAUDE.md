@@ -211,6 +211,7 @@ Toggle via ImGui. Dead branches are skipped by GPU predication — zero cost. Fo
 18. **Back-face culling.** Dynamic cull mode via `VK_EXT_extended_dynamic_state`.
 19. **Multiple models / scene composition.** Add objects at runtime, separate VBO/IBO per object, TLAS rebuild.
 20. **Screenshot / capture system.**
+21. **Resize without FIFO blink.** During drag-resize the main loop skips rendering (`continue` after `handle_resize()`) to avoid black frames from uninitialized HDR images. In immediate mode the next frame presents in microseconds so the skip is invisible. In FIFO mode the compositor waits for the next vsync (~16ms at 60Hz) before receiving a new frame, so stale buffer content blinks at the window edges during rapid resize. The fix is to render during resize: after recreating the swapchain and HDR images, do a full PBR+composite pass before continuing. This requires the freshly allocated HDR images to contain valid data — either pre-clear them to black via `vkCmdClearColorImage`, or accept one frame of black and render normally (removing the `continue`). The black-frame approach was tested and is worse — the entire window flashes black each resize event. Pre-clearing to a neutral color and rendering in the same iteration is the cleanest path.
 
 ### Refactoring — Zero-Arg Constructor + Setter Pattern
 
@@ -227,6 +228,19 @@ Convert remaining multi-arg constructors to zero-arg + setters + `init()` (same 
 - [ ] **DepthStencilAttachment** (5 params)
 
 Each conversion follows the same steps: add `m_modified` flag, replace constructor args with setters, move body to `init()`, assert `!m_modified` in accessors. Dependent types in calling code wrap in `std::optional` and use `emplace()`.
+
+### Milestone 6 — Dual-GPU Composite (post-refactoring)
+
+On PRIME/Optimus laptops the dGPU (NVIDIA) renders offscreen and the iGPU (Intel) owns the display controller. Currently the composite pass (tonemap fullscreen triangle) runs on the dGPU and the result is copied to the iGPU for presentation — wasting dGPU cycles on trivial work and adding a cross-GPU copy.
+
+**Idea:** Run the composite pass on the iGPU directly. The PBR pass produces the HDR image on the dGPU, then `VK_KHR_external_memory` shares it with the iGPU. The iGPU runs the tonemap + ImGui overlay and presents. This frees the dGPU to start the next frame's PBR work immediately.
+
+**Observations from dual-GPU testing:**
+- In PRIME mode, only FIFO and Mailbox present modes are available (iGPU display controller limitation).
+- With hwmux (NVIDIA-only), all four present modes are available.
+- The composite pass is a single fullscreen triangle — negligible GPU load, well within iGPU capability.
+
+**Requires:** Zero-arg constructor refactoring (Device, Swapchain, etc.) must be complete first, since this needs two Device instances with different physical devices and careful resource lifetime management.
 
 ## Troubleshooting
 

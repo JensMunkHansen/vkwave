@@ -138,6 +138,15 @@ void Scene::switch_model(const std::string& model_path)
 {
   m_engine->graph->drain();
   data.load_model(*m_engine->device, model_path);
+
+  // Fit camera to new model bounds
+  if (data.gltf_scene.bounds.valid())
+  {
+    float bounds[6];
+    data.gltf_scene.bounds.to_bounds(bounds);
+    data.camera.reset_camera(bounds);
+  }
+
   wire_pbr_context();
   pipeline->rebuild_pbr_descriptors(data);
 }
