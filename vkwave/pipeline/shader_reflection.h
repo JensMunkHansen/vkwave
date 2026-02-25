@@ -2,7 +2,6 @@
 
 #include <vkwave/config.h>
 
-#include <cassert>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -32,6 +31,8 @@ struct DescriptorSetInfo
 class ShaderReflection
 {
 public:
+  void set_debug(bool enable) { debug_ = enable; }
+
   /// Add a compiled SPIR-V stage for reflection.
   void add_stage(const std::vector<uint32_t>& spirv,
     vk::ShaderStageFlagBits stage);
@@ -60,6 +61,7 @@ public:
   void validate_ubo_size(uint32_t set, uint32_t binding, uint32_t expected) const;
 
 private:
+  bool debug_{ false };
   std::vector<vk::PushConstantRange> push_constant_ranges_;
   std::vector<DescriptorSetInfo> descriptor_sets_;
 };

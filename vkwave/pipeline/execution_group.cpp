@@ -49,6 +49,7 @@ ExecutionGroup::ExecutionGroup(
 
   // Reflect layout
   ShaderReflection reflection;
+  reflection.set_debug(compiler->debug_info());
   reflection.add_stage(vert.spirv, vk::ShaderStageFlagBits::eVertex);
   reflection.add_stage(frag.spirv, vk::ShaderStageFlagBits::eFragment);
   reflection.finalize();

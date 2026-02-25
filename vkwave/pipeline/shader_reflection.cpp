@@ -3,7 +3,6 @@
 #include <spirv_reflect.h>
 
 #include <algorithm>
-#include <cassert>
 #include <stdexcept>
 #include <string>
 
@@ -44,19 +43,19 @@ static vk::DescriptorType to_vk_descriptor_type(SpvReflectDescriptorType type)
 void ShaderReflection::add_stage(
   const std::vector<uint32_t>& spirv, vk::ShaderStageFlagBits stage)
 {
-  SpvReflectShaderModule module{};
+  SpvReflectShaderModule shaderModule{};
   SpvReflectResult result = spvReflectCreateShaderModule(
-    spirv.size() * sizeof(uint32_t), spirv.data(), &module);
+    spirv.size() * sizeof(uint32_t), spirv.data(), &shaderModule);
   if (result != SPV_REFLECT_RESULT_SUCCESS)
     throw std::runtime_error("spvReflectCreateShaderModule failed");
 
   // --- Push constants ---
   uint32_t pc_count = 0;
-  spvReflectEnumeratePushConstantBlocks(&module, &pc_count, nullptr);
+  spvReflectEnumeratePushConstantBlocks(&shaderModule, &pc_count, nullptr);
   if (pc_count > 0)
   {
     std::vector<SpvReflectBlockVariable*> pc_blocks(pc_count);
-    spvReflectEnumeratePushConstantBlocks(&module, &pc_count, pc_blocks.data());
+    spvReflectEnumeratePushConstantBlocks(&shaderModule, &pc_count, pc_blocks.data());
 
     for (uint32_t i = 0; i < pc_count; ++i)
     {
@@ -70,11 +69,11 @@ void ShaderReflection::add_stage(
 
   // --- Descriptor bindings ---
   uint32_t binding_count = 0;
-  spvReflectEnumerateDescriptorBindings(&module, &binding_count, nullptr);
+  spvReflectEnumerateDescriptorBindings(&shaderModule, &binding_count, nullptr);
   if (binding_count > 0)
   {
     std::vector<SpvReflectDescriptorBinding*> bindings(binding_count);
-    spvReflectEnumerateDescriptorBindings(&module, &binding_count, bindings.data());
+    spvReflectEnumerateDescriptorBindings(&shaderModule, &binding_count, bindings.data());
 
     for (uint32_t i = 0; i < binding_count; ++i)
     {
@@ -114,7 +113,7 @@ void ShaderReflection::add_stage(
     }
   }
 
-  spvReflectDestroyShaderModule(&module);
+  spvReflectDestroyShaderModule(&shaderModule);
 }
 
 void ShaderReflection::finalize()
@@ -182,37 +181,40 @@ std::vector<vk::DescriptorSetLayout>
 
 void ShaderReflection::validate_push_constant_size(uint32_t expected) const
 {
-#ifndef NDEBUG
+  if (!debug_) return;
+
   uint32_t total = 0;
   for (auto& range : push_constant_ranges_)
     total = std::max(total, range.offset + range.size);
-  assert(total == expected && "Push constant size mismatch between shader and C++ struct");
-#else
-  (void)expected;
-#endif
+  if (total != expected)
+    throw std::runtime_error(
+      "Push constant size mismatch: shader declares " + std::to_string(total) +
+      " bytes but C++ struct is " + std::to_string(expected) + " bytes");
 }
 
 void ShaderReflection::validate_ubo_size(
   uint32_t set, uint32_t binding, uint32_t expected) const
 {
-#ifndef NDEBUG
+  if (!debug_) return;
+
   for (auto& s : descriptor_sets_)
   {
     if (s.set != set) continue;
     for (auto& b : s.bindings)
     {
       if (b.binding != binding) continue;
-      assert(b.blockSize == expected &&
-        "UBO block size mismatch between shader and C++ struct");
+      if (b.blockSize != expected)
+        throw std::runtime_error(
+          "UBO block size mismatch at set=" + std::to_string(set) +
+          " binding=" + std::to_string(binding) + ": shader declares " +
+          std::to_string(b.blockSize) + " bytes but C++ struct is " +
+          std::to_string(expected) + " bytes");
       return;
     }
   }
-  assert(false && "UBO binding not found in reflection data");
-#else
-  (void)set;
-  (void)binding;
-  (void)expected;
-#endif
+  throw std::runtime_error(
+    "UBO binding not found in reflection data: set=" + std::to_string(set) +
+    " binding=" + std::to_string(binding));
 }
 
 } // namespace vkwave

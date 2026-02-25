@@ -11,6 +11,23 @@ target_link_libraries(core_test
 sps_copy_runtime_dlls(core_test)
 sps_catch_discover_tests(core_test)
 
+add_executable(shader_compiler_test
+  shader_compiler_test.cpp
+)
+
+target_link_libraries(shader_compiler_test
+  PRIVATE
+    vkwave
+    Catch2::Catch2WithMain
+)
+
+target_compile_definitions(shader_compiler_test PRIVATE
+  TEST_SHADER_DIR="${CMAKE_SOURCE_DIR}/vkwave/shaders/"
+)
+
+sps_copy_runtime_dlls(shader_compiler_test)
+sps_catch_discover_tests(shader_compiler_test)
+
 add_executable(pipeline_test
   pipeline_test.cpp
 )

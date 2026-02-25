@@ -9,25 +9,7 @@
 // The Registered<> weak_ptr keeps it alive as long as this shared_ptr does.
 static auto g_compiler = vkwave::ShaderCompiler::create();
 
-// --- Fullscreen shader tests ---
-
-TEST_CASE("vkwave::pipeline::shader_compiler_compiles_vertex", "[pipeline]")
-{
-  auto compiler = vkwave::ShaderCompiler::get();
-  auto result = compiler->compile(
-    TEST_SHADER_DIR "fullscreen.vert", vk::ShaderStageFlagBits::eVertex);
-  CHECK(!result.spirv.empty());
-  CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
-}
-
-TEST_CASE("vkwave::pipeline::shader_compiler_compiles_fragment", "[pipeline]")
-{
-  auto compiler = vkwave::ShaderCompiler::get();
-  auto result = compiler->compile(
-    TEST_SHADER_DIR "fullscreen.frag", vk::ShaderStageFlagBits::eFragment);
-  CHECK(!result.spirv.empty());
-  CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
-}
+// --- Fullscreen reflection tests ---
 
 TEST_CASE("vkwave::pipeline::reflection_extracts_push_constants", "[pipeline]")
 {
@@ -68,32 +50,15 @@ TEST_CASE("vkwave::pipeline::reflection_validates_push_constant_size", "[pipelin
     TEST_SHADER_DIR "fullscreen.frag", vk::ShaderStageFlagBits::eFragment);
 
   vkwave::ShaderReflection reflection;
+  reflection.set_debug(true);
   reflection.add_stage(frag.spirv, vk::ShaderStageFlagBits::eFragment);
   reflection.finalize();
 
-  // Should not assert for correct size
+  // Should not throw for correct size
   reflection.validate_push_constant_size(sizeof(vkwave::TrianglePushConstants));
 }
 
-// --- Cube shader tests ---
-
-TEST_CASE("vkwave::pipeline::shader_compiler_compiles_cube_vertex", "[pipeline]")
-{
-  auto compiler = vkwave::ShaderCompiler::get();
-  auto result = compiler->compile(
-    TEST_SHADER_DIR "cube.vert", vk::ShaderStageFlagBits::eVertex);
-  CHECK(!result.spirv.empty());
-  CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
-}
-
-TEST_CASE("vkwave::pipeline::shader_compiler_compiles_cube_fragment", "[pipeline]")
-{
-  auto compiler = vkwave::ShaderCompiler::get();
-  auto result = compiler->compile(
-    TEST_SHADER_DIR "cube.frag", vk::ShaderStageFlagBits::eFragment);
-  CHECK(!result.spirv.empty());
-  CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
-}
+// --- Cube reflection tests ---
 
 TEST_CASE("vkwave::pipeline::reflection_extracts_cube_ubo", "[pipeline]")
 {
@@ -126,6 +91,7 @@ TEST_CASE("vkwave::pipeline::reflection_extracts_cube_push_constants", "[pipelin
     TEST_SHADER_DIR "cube.frag", vk::ShaderStageFlagBits::eFragment);
 
   vkwave::ShaderReflection reflection;
+  reflection.set_debug(true);
   reflection.add_stage(vert.spirv, vk::ShaderStageFlagBits::eVertex);
   reflection.add_stage(frag.spirv, vk::ShaderStageFlagBits::eFragment);
   reflection.finalize();

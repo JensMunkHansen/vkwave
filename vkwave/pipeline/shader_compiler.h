@@ -25,6 +25,7 @@ public:
   ~ShaderCompiler();
 
   void set_debug_info(bool enable) { m_debug_info = enable; }
+  bool debug_info() const { return m_debug_info; }
   void set_optimization(bool enable) { m_optimize = enable; }
 
   /// Compile GLSL file to SPIR-V. Throws on failure.
