@@ -18,27 +18,28 @@ static constexpr bool kDebug =
 Engine::Engine(const AppConfig& cfg)
   : window(cfg.window_title, cfg.window_width, cfg.window_height,
       true, true, parse_window_mode(cfg.window_mode))
-  , instance(cfg.window_title.c_str(), cfg.window_title.c_str(),
-      VK_MAKE_API_VERSION(0, 0, 1, 0),
-      VK_MAKE_API_VERSION(0, 0, 1, 0),
-      kDebug, false)
-  , surface(instance.instance(), window.get())
-  , device(create_device(cfg.preferred_gpu))
-  , swapchain(device, surface.get(), window.width(), window.height(), false,
-      parse_present_mode(cfg.present_mode), cfg.swapchain_images)
-  , graph(device)
   , config(cfg)
 {
+  instance.set_application_name(cfg.window_title);
+  instance.set_engine_name(cfg.window_title);
+  instance.set_validation_layers(kDebug);
+  instance.init();
+
+  surface.emplace(instance.instance(), window.get());
+  device.emplace(create_device(cfg.preferred_gpu));
+  swapchain.emplace(*device, surface->get(), window.width(), window.height(), false,
+    parse_present_mode(cfg.present_mode), cfg.swapchain_images);
+  graph.emplace(*device);
 }
 
 Engine::~Engine()
 {
-  graph.drain();
+  graph->drain();
 }
 
 bool Engine::render_frame()
 {
-  return graph.render_frame(swapchain);
+  return graph->render_frame(*swapchain);
 }
 
 double Engine::update_fps()
@@ -72,9 +73,9 @@ bool Engine::handle_resize()
       return true;  // Still minimized — skip frame
   }
 
-  graph.drain();
-  swapchain.recreate(w, h);
-  graph.resize(swapchain);
+  graph->drain();
+  swapchain->recreate(w, h);
+  graph->resize(*swapchain);
 
   spdlog::info("Resized to {}x{}", w, h);
   return true;
@@ -101,9 +102,9 @@ vkwave::Device Engine::create_device(const std::string& preferred_gpu)
   vk::PhysicalDeviceFeatures required_features{};
 
   auto physical_device = vkwave::Device::pick_best_physical_device(
-    instance, surface.get(), required_features, ext_span, preferred_gpu);
+    instance, surface->get(), required_features, ext_span, preferred_gpu);
 
   return vkwave::Device(
-    instance, surface.get(), false, physical_device, ext_span,
+    instance, surface->get(), false, physical_device, ext_span,
     required_features, {}, false);
 }

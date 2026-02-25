@@ -13,16 +13,17 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 /// Vulkan infrastructure: window, instance, device, swapchain, render graph.
 struct Engine
 {
   vkwave::Window window;
   vkwave::Instance instance;
-  vkwave::WindowSurface surface;
-  vkwave::Device device;
-  vkwave::Swapchain swapchain;
-  vkwave::RenderGraph graph;
+  std::optional<vkwave::WindowSurface> surface;
+  std::optional<vkwave::Device> device;
+  std::optional<vkwave::Swapchain> swapchain;
+  std::optional<vkwave::RenderGraph> graph;
   AppConfig config;
 
   explicit Engine(const AppConfig& cfg);
@@ -41,7 +42,7 @@ struct Engine
   [[nodiscard]] bool should_close() const { return window.should_close(); }
   [[nodiscard]] bool frame_limit_reached() const
   {
-    return config.max_frames > 0 && graph.cpu_frame() >= config.max_frames;
+    return config.max_frames > 0 && graph->cpu_frame() >= config.max_frames;
   }
 
   void set_shader_compiler(std::shared_ptr<vkwave::ShaderCompiler> compiler);

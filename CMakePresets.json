@@ -83,6 +83,7 @@
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++",
                 "CMAKE_PREFIX_PATH": "$env{HOME}/vkwavepkg/linux/gcc/install",
+                "SPS_DISABLE_AVX512": "ON",
                 "BUILD_TESTING": "ON"
             }
         }

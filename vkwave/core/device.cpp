@@ -470,6 +470,9 @@ Device::Device(const Instance& inst, vk::SurfaceKHR surface, bool prefer_distinc
   // Extended dynamic state (for per-draw cull mode)
   extensions_to_enable.push_back(VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME);
 
+  // Required for SPV_KHR_non_semantic_info (shader debug info) on Vulkan < 1.3
+  extensions_to_enable.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
+
   // Add ray tracing extensions if supported and requested
   if (enable_ray_tracing && m_ray_tracing_capabilities.supported)
   {
@@ -649,8 +652,27 @@ uint32_t Device::find_memory_type(
   throw std::runtime_error("Failed to find suitable memory type!");
 }
 
+Device::Device(Device&& other) noexcept
+  : m_device(std::exchange(other.m_device, VK_NULL_HANDLE))
+  , m_physical_device(std::exchange(other.m_physical_device, VK_NULL_HANDLE))
+  , m_gpu_name(std::move(other.m_gpu_name))
+  , m_enabled_features(other.m_enabled_features)
+  , m_ray_tracing_capabilities(other.m_ray_tracing_capabilities)
+  , m_graphics_queue(std::exchange(other.m_graphics_queue, VK_NULL_HANDLE))
+  , m_present_queue(std::exchange(other.m_present_queue, VK_NULL_HANDLE))
+  , m_transfer_queue(std::exchange(other.m_transfer_queue, VK_NULL_HANDLE))
+  , m_present_queue_family_index(other.m_present_queue_family_index)
+  , m_graphics_queue_family_index(other.m_graphics_queue_family_index)
+  , m_transfer_queue_family_index(other.m_transfer_queue_family_index)
+  , m_cmd_pools(std::move(other.m_cmd_pools))
+  , m_dldi(other.m_dldi)
+{
+}
+
 Device::~Device()
 {
+  if (!m_device)
+    return;
   std::scoped_lock locker(m_mutex);
 
   // Because the device handle must be valid for the destruction of the command pools in the

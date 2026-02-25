@@ -212,6 +212,22 @@ Toggle via ImGui. Dead branches are skipped by GPU predication — zero cost. Fo
 19. **Multiple models / scene composition.** Add objects at runtime, separate VBO/IBO per object, TLAS rebuild.
 20. **Screenshot / capture system.**
 
+### Refactoring — Zero-Arg Constructor + Setter Pattern
+
+Convert remaining multi-arg constructors to zero-arg + setters + `init()` (same pattern as `Instance`):
+
+- [ ] **Device** (8 params)
+- [ ] **Swapchain** (7 params)
+- [ ] **Window** (6 params)
+- [ ] **ImGuiOverlay** (6 params)
+- [ ] **Image** (6 params)
+- [ ] **Texture** (6 params)
+- [ ] **ExecutionGroup** (5 params)
+- [ ] **Buffer** (5 params)
+- [ ] **DepthStencilAttachment** (5 params)
+
+Each conversion follows the same steps: add `m_modified` flag, replace constructor args with setters, move body to `init()`, assert `!m_modified` in accessors. Dependent types in calling code wrap in `std::optional` and use `emplace()`.
+
 ## Troubleshooting
 
 ### NVIDIA GPU reports no presentation support (PRIME/Optimus laptops)

@@ -27,7 +27,7 @@ void ScenePipeline::create_hdr_images(vk::Extent2D extent, uint32_t count)
   hdr_images.clear();
   for (uint32_t i = 0; i < count; ++i)
   {
-    hdr_images.emplace_back(m_engine->device, kHdrFormat, extent,
+    hdr_images.emplace_back(*m_engine->device, kHdrFormat, extent,
       vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
       fmt::format("hdr_image_{}", i));
   }
@@ -44,9 +44,9 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
 {
   // Create render passes (owned by ScenePipeline, shared with ExecutionGroups)
   scene_renderpass = vkwave::make_scene_renderpass(
-    engine.device.device(), kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
+    engine.device->device(), kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
   composite_renderpass = vkwave::make_composite_renderpass(
-    engine.device.device(), engine.swapchain.image_format(), kDebug);
+    engine.device->device(), engine.swapchain->image_format(), kDebug);
 
   // Create sampler (persistent across resize)
   {
@@ -59,12 +59,12 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
     info.anisotropyEnable = VK_FALSE;
     info.unnormalizedCoordinates = VK_FALSE;
     info.mipmapMode = vk::SamplerMipmapMode::eLinear;
-    hdr_sampler = engine.device.device().createSampler(info);
+    hdr_sampler = engine.device->device().createSampler(info);
   }
 
   // One HDR image per offscreen slot -- eliminates WAW hazard
-  const uint32_t os_depth = engine.swapchain.image_count();
-  create_hdr_images(engine.swapchain.extent(), os_depth);
+  const uint32_t os_depth = engine.swapchain->image_count();
+  create_hdr_images(engine.swapchain->extent(), os_depth);
 
   // PBR pass: renders to offscreen HDR image
   auto pbr_spec = vkwave::PBRPass::pipeline_spec();
@@ -76,7 +76,7 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
   for (uint32_t i = 0; i < os_depth; ++i)
     hdr_views.push_back(hdr_images[i].image_view());
 
-  auto& pbr_grp = engine.graph.add_offscreen_group("pbr", pbr_spec, kHdrFormat, kDebug);
+  auto& pbr_grp = engine.graph->add_offscreen_group("pbr", pbr_spec, kHdrFormat, kDebug);
   pbr_grp.set_color_views(hdr_views);
 
   // Descriptor set frequency layout:
@@ -90,36 +90,44 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
   auto comp_spec = vkwave::CompositePass::pipeline_spec();
   comp_spec.existing_renderpass = composite_renderpass;
 
-  auto& comp_grp = engine.graph.set_present_group(
-    "composite", comp_spec, engine.swapchain.image_format(), kDebug);
+  auto& comp_grp = engine.graph->set_present_group(
+    "composite", comp_spec, engine.swapchain->image_format(), kDebug);
 
-  // Gate present at display refresh rate -- offscreen runs at GPU speed,
-  // present only acquires/presents when the display needs a new frame.
-  float refresh = static_cast<float>(engine.window.refresh_rate());
-  if (refresh > 0.0f)
-    comp_grp.set_gating(vkwave::GatingMode::wall_clock, refresh);
+  // Gate present based on present mode: FIFO modes are vsync'd by the driver,
+  // so always present. Non-FIFO modes gate at display refresh to avoid
+  // unnecessary acquire/present overhead.
+  auto pm = engine.swapchain->present_mode();
+  bool fifo = (pm == vk::PresentModeKHR::eFifo || pm == vk::PresentModeKHR::eFifoRelaxed);
+  if (fifo)
+    comp_grp.set_gating(vkwave::GatingMode::always);
+  else
+  {
+    float refresh = static_cast<float>(engine.window.refresh_rate());
+    if (refresh > 0.0f)
+      comp_grp.set_gating(vkwave::GatingMode::wall_clock, refresh);
+  }
 
   // ImGui overlay -- records into the composite group's command buffer
   imgui = std::make_unique<vkwave::ImGuiOverlay>(
-    engine.instance.instance(), engine.device,
-    engine.window.get(), engine.swapchain.image_format(),
-    engine.swapchain.image_count(), kDebug);
+    engine.instance.instance(), *engine.device,
+    engine.window.get(), engine.swapchain->image_format(),
+    engine.swapchain->image_count(), kDebug);
 
   // Set resize callback so the graph can recreate offscreen images on resize
-  engine.graph.set_resize_fn([this](vk::Extent2D extent) {
-    auto depth = m_engine->graph.offscreen_depth();
+  engine.graph->set_resize_fn([this](vk::Extent2D extent) {
+    auto depth = m_engine->graph->offscreen_depth();
     create_hdr_images(extent, depth);
 
     std::vector<vk::ImageView> views;
     views.reserve(depth);
     for (uint32_t i = 0; i < depth; ++i)
       views.push_back(hdr_images[i].image_view());
-    auto& grp = static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
+    auto& grp = static_cast<vkwave::ExecutionGroup&>(m_engine->graph->offscreen_group(0));
     grp.set_color_views(views);
   });
 
   // Build all frame resources
-  engine.graph.build(engine.swapchain);
+  engine.graph->build(*engine.swapchain);
 
   // Write texture descriptors (after build allocates descriptor sets)
   write_pbr_descriptors(data);
@@ -128,7 +136,7 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
   comp_grp.write_image_descriptor(0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
 
   // Overlay framebuffers reference swapchain image views -- create after build
-  imgui->create_frame_resources(engine.swapchain, engine.swapchain.image_count());
+  imgui->create_frame_resources(*engine.swapchain, engine.swapchain->image_count());
 }
 
 ScenePipeline::~ScenePipeline()
@@ -136,7 +144,7 @@ ScenePipeline::~ScenePipeline()
   imgui.reset();
   hdr_images.clear();
 
-  auto dev = m_engine->device.device();
+  auto dev = m_engine->device->device();
   if (hdr_sampler)
     dev.destroySampler(hdr_sampler);
   if (scene_renderpass)
@@ -212,7 +220,7 @@ void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)
   grp.destroy_frame_resources();
   grp.set_descriptor_count(1, data.material_count());
   grp.set_descriptor_count(2, 1);
-  grp.create_frame_resources(extent, m_engine->graph.offscreen_depth());
+  grp.create_frame_resources(extent, m_engine->graph->offscreen_depth());
 
   write_pbr_descriptors(data);
 }
@@ -232,7 +240,7 @@ void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
   old_group.destroy_frame_resources();
 
   // Destroy old scene render pass
-  auto dev = m_engine->device.device();
+  auto dev = m_engine->device->device();
   if (scene_renderpass)
   {
     dev.destroyRenderPass(scene_renderpass);
@@ -249,11 +257,11 @@ void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
   pbr_spec.msaa_samples = msaa_samples;
 
   // Replace the offscreen group (new pipeline + render pass reference)
-  auto& new_grp = m_engine->graph.replace_offscreen_group(
+  auto& new_grp = m_engine->graph->replace_offscreen_group(
     0, "pbr", pbr_spec, kHdrFormat, kDebug);
 
   // Update color views from existing HDR images
-  const uint32_t os_depth = m_engine->graph.offscreen_depth();
+  const uint32_t os_depth = m_engine->graph->offscreen_depth();
   std::vector<vk::ImageView> hdr_views;
   hdr_views.reserve(os_depth);
   for (uint32_t i = 0; i < os_depth; ++i)
@@ -299,10 +307,10 @@ void ScenePipeline::resize(const vkwave::Swapchain& swapchain, SceneData& data)
 
 vkwave::ExecutionGroup& ScenePipeline::pbr_group()
 {
-  return static_cast<vkwave::ExecutionGroup&>(m_engine->graph.offscreen_group(0));
+  return static_cast<vkwave::ExecutionGroup&>(m_engine->graph->offscreen_group(0));
 }
 
 vkwave::ExecutionGroup& ScenePipeline::composite_group()
 {
-  return static_cast<vkwave::ExecutionGroup&>(m_engine->graph.present_group());
+  return static_cast<vkwave::ExecutionGroup&>(m_engine->graph->present_group());
 }

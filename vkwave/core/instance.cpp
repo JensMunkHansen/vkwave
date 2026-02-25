@@ -13,8 +13,6 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <utility>
 #include <vulkan/vulkan_structs.hpp>
 
-#include <iostream>
-
 VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
   vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
   vk::DebugUtilsMessageTypeFlagsEXT messageType,
@@ -43,9 +41,11 @@ Instance::Instance(Instance&& other) noexcept
 Instance::~Instance()
 {
 #ifdef VKWAVE_DEBUG
-  m_instance.destroy(m_debugMessenger, nullptr, m_dldi);
+  if (m_instance && m_debugMessenger)
+    m_instance.destroy(m_debugMessenger, nullptr, m_dldi);
 #endif
-  m_instance.destroy();
+  if (m_instance)
+    m_instance.destroy();
 }
 
 bool Instance::is_layer_supported(const std::string& layer_name)
@@ -67,16 +67,10 @@ bool Instance::is_extension_supported(const std::string& extension_name)
            }) != supportedExtensions.end();
 }
 
-Instance::Instance(const std::string& application_name, const std::string& engine_name,
-  const std::uint32_t application_version, const std::uint32_t engine_version,
-  bool enable_validation_layers, bool enable_renderdoc_layer,
-  const std::vector<std::string>& requested_instance_extensions,
-  const std::vector<std::string>& requested_instance_layers)
+void Instance::init()
 {
-  m_enable_validation_layers = enable_validation_layers;
-
-  assert(!application_name.empty());
-  assert(!engine_name.empty());
+  assert(!m_app_name.empty());
+  assert(!m_engine_name.empty());
 
   spdlog::trace("Initializing Vulkan metaloader");
 
@@ -91,12 +85,12 @@ Instance::Instance(const std::string& application_name, const std::string& engin
     VK_API_VERSION_PATCH(version));
 
   spdlog::trace("Initialising Vulkan instance");
-  spdlog::trace("Application name: {}", application_name);
-  spdlog::trace("Application version: {}.{}.{}", VK_API_VERSION_MAJOR(application_version),
-    VK_API_VERSION_MINOR(application_version), VK_API_VERSION_PATCH(application_version));
-  spdlog::trace("Engine name: {}", engine_name);
-  spdlog::trace("Engine version: {}.{}.{}", VK_API_VERSION_MAJOR(engine_version),
-    VK_API_VERSION_MINOR(engine_version), VK_API_VERSION_PATCH(engine_version));
+  spdlog::trace("Application name: {}", m_app_name);
+  spdlog::trace("Application version: {}.{}.{}", VK_API_VERSION_MAJOR(m_app_version),
+    VK_API_VERSION_MINOR(m_app_version), VK_API_VERSION_PATCH(m_app_version));
+  spdlog::trace("Engine name: {}", m_engine_name);
+  spdlog::trace("Engine version: {}.{}.{}", VK_API_VERSION_MAJOR(m_engine_version),
+    VK_API_VERSION_MINOR(m_engine_version), VK_API_VERSION_PATCH(m_engine_version));
   spdlog::trace("Requested Vulkan API version: {}.{}.{}",
     VK_API_VERSION_MAJOR(REQUIRED_VK_API_VERSION), VK_API_VERSION_MINOR(REQUIRED_VK_API_VERSION),
     VK_API_VERSION_PATCH(REQUIRED_VK_API_VERSION));
@@ -129,10 +123,10 @@ Instance::Instance(const std::string& application_name, const std::string& engin
   }
 
   vk::ApplicationInfo applicationInfo;
-  applicationInfo.pApplicationName = application_name.c_str();
-  applicationInfo.applicationVersion = application_version;
-  applicationInfo.pEngineName = engine_name.c_str();
-  applicationInfo.engineVersion = engine_version;
+  applicationInfo.pApplicationName = m_app_name.c_str();
+  applicationInfo.applicationVersion = m_app_version;
+  applicationInfo.pEngineName = m_engine_name.c_str();
+  applicationInfo.engineVersion = m_engine_version;
   applicationInfo.apiVersion = REQUIRED_VK_API_VERSION;
 
   std::vector<const char*> instance_extension_wishlist = {
@@ -168,7 +162,7 @@ Instance::Instance(const std::string& application_name, const std::string& engin
 
   // We have to check which instance extensions of our wishlist are available on the current system!
   // Add requested instance extensions to wishlist.
-  for (const auto& requested_instance_extension : requested_instance_extensions)
+  for (const auto& requested_instance_extension : m_requested_extensions)
   {
     instance_extension_wishlist.push_back(requested_instance_extension.c_str());
   }
@@ -211,7 +205,7 @@ Instance::Instance(const std::string& application_name, const std::string& engin
   // RenderDoc is a very useful open source graphics debugger for Vulkan and other APIs.
   // Not using it all the time during development is fine, but as soon as something crashes
   // you should enable it, take a snapshot and look up what's wrong.
-  if (enable_renderdoc_layer)
+  if (m_enable_renderdoc_layer)
   {
     spdlog::trace("   - VK_LAYER_RENDERDOC_Capture");
     instance_layers_wishlist.push_back("VK_LAYER_RENDERDOC_Capture");
@@ -223,7 +217,7 @@ Instance::Instance(const std::string& application_name, const std::string& engin
   // Understand that in contrary to other APIs, in Vulkan API the driver provides no error checks
   // for you! If you use Vulkan API incorrectly, your application will likely just crash.
   // To avoid this, you must use validation layers during development!
-  if (enable_validation_layers)
+  if (m_enable_validation_layers)
   {
     spdlog::trace("   - VK_LAYER_KHRONOS_validation");
     instance_layers_wishlist.push_back("VK_LAYER_KHRONOS_validation");
@@ -232,7 +226,7 @@ Instance::Instance(const std::string& application_name, const std::string& engin
 #endif
 
   // Add requested instance layers to wishlist.
-  for (const auto& instance_layer : requested_instance_layers)
+  for (const auto& instance_layer : m_requested_layers)
   {
     instance_layers_wishlist.push_back(instance_layer.c_str());
   }
@@ -273,13 +267,12 @@ Instance::Instance(const std::string& application_name, const std::string& engin
     }
   }
 
-  // Crash here
   vk::InstanceCreateInfo instanceCreateInfo;
   instanceCreateInfo.setFlags(vk::InstanceCreateFlags());
   instanceCreateInfo.setPApplicationInfo(&applicationInfo);
   instanceCreateInfo.setPEnabledExtensionNames(enabled_instance_extensions);
-  instanceCreateInfo.setPEnabledLayerNames(validationLayers);
-  instanceCreateInfo.setEnabledLayerCount(static_cast<std::uint32_t>(validationLayers.size()));
+  instanceCreateInfo.setPEnabledLayerNames(enabled_instance_layers);
+  instanceCreateInfo.setEnabledLayerCount(static_cast<std::uint32_t>(enabled_instance_layers.size()));
   instanceCreateInfo.setEnabledExtensionCount(
     static_cast<std::uint32_t>(enabled_instance_extensions.size()));
 
@@ -309,21 +302,8 @@ Instance::Instance(const std::string& application_name, const std::string& engin
 
   m_debugMessenger = m_instance.createDebugUtilsMessengerEXT(createInfo, nullptr, m_dldi);
 #endif
+
+  m_modified = false;
 }
 
-Instance::Instance(const std::string& application_name, const std::string& engine_name,
-  const std::uint32_t application_version, const std::uint32_t engine_version,
-  bool enable_validation_layers, bool enable_renderdoc_layer)
-  : Instance(application_name, engine_name, application_version, engine_version,
-      enable_validation_layers, enable_renderdoc_layer, {}, {})
-{
-}
-void Instance::setup_vulkan_debug_callback()
-{
-  if (m_enable_validation_layers)
-  {
-    spdlog::trace("Khronos validation layers are enabled");
-  }
-  // TODO:::
-}
 }

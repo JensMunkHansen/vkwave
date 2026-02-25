@@ -32,7 +32,7 @@ void Scene::build_pipeline()
 
 Scene::~Scene()
 {
-  m_engine->device.device().waitIdle();
+  m_engine->device->device().waitIdle();
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ void Scene::wire_record_callbacks()
       // Update descriptor to sample from the latest offscreen HDR image.
       // begin_frame() already waited for this slot's previous use, so the
       // descriptor set is safe to update.
-      auto slot = m_engine->graph.last_offscreen_slot();
+      auto slot = m_engine->graph->last_offscreen_slot();
       pipeline->composite_group().write_image_descriptor(
         0, "hdrImage", frame_index,
         pipeline->hdr_images[slot].image_view(), pipeline->hdr_sampler);
@@ -107,22 +107,22 @@ void Scene::wire_record_callbacks()
 
 void Scene::switch_model(const std::string& model_path)
 {
-  m_engine->graph.drain();
-  data.load_model(m_engine->device, model_path);
+  m_engine->graph->drain();
+  data.load_model(*m_engine->device, model_path);
   wire_pbr_context();
   pipeline->rebuild_pbr_descriptors(data);
 }
 
 void Scene::switch_ibl(const std::string& hdr_path)
 {
-  m_engine->graph.drain();
-  data.load_ibl(m_engine->device, hdr_path);
+  m_engine->graph->drain();
+  data.load_ibl(*m_engine->device, hdr_path);
   pipeline->write_ibl_descriptors(data);
 }
 
 void Scene::rebuild_pipeline(vk::SampleCountFlagBits new_samples)
 {
-  m_engine->graph.drain();
+  m_engine->graph->drain();
   pipeline->rebuild_for_msaa(new_samples, data);
   wire_pbr_context();
   wire_record_callbacks();
@@ -168,7 +168,7 @@ void Scene::draw_ui(Engine& app, double avg_fps)
       { vk::PresentModeKHR::eFifoRelaxed,   "FIFO Relaxed" },
     };
 
-    auto current_mode = app.swapchain.present_mode();
+    auto current_mode = app.swapchain->present_mode();
     const char* current_label = vk::to_string(current_mode).c_str();
     for (const auto& entry : present_mode_table)
       if (entry.mode == current_mode) { current_label = entry.label; break; }
@@ -177,7 +177,7 @@ void Scene::draw_ui(Engine& app, double avg_fps)
     {
       for (const auto& entry : present_mode_table)
       {
-        auto& avail = app.swapchain.available_present_modes();
+        auto& avail = app.swapchain->available_present_modes();
         if (std::find(avail.begin(), avail.end(), entry.mode) == avail.end())
           continue;
 
@@ -186,21 +186,21 @@ void Scene::draw_ui(Engine& app, double avg_fps)
         {
           if (entry.mode != current_mode)
           {
-            app.graph.drain();
-            app.swapchain.set_preferred_present_mode(entry.mode);
-            app.swapchain.recreate(app.window.width(), app.window.height());
-            app.graph.resize(app.swapchain);
-            resize(app.swapchain);
+            app.graph->drain();
+            app.swapchain->set_preferred_present_mode(entry.mode);
+            app.swapchain->recreate(app.window.width(), app.window.height());
+            app.graph->resize(*app.swapchain);
+            resize(*app.swapchain);
 
             bool fifo = (entry.mode == vk::PresentModeKHR::eFifo
                       || entry.mode == vk::PresentModeKHR::eFifoRelaxed);
             if (fifo)
-              app.graph.present_group().set_gating(vkwave::GatingMode::always);
+              app.graph->present_group().set_gating(vkwave::GatingMode::always);
             else
             {
               float refresh = static_cast<float>(app.window.refresh_rate());
               if (refresh > 0.0f)
-                app.graph.present_group().set_gating(vkwave::GatingMode::wall_clock, refresh);
+                app.graph->present_group().set_gating(vkwave::GatingMode::wall_clock, refresh);
             }
 
             spdlog::info("Present mode changed to {}", vk::to_string(entry.mode));
@@ -220,7 +220,7 @@ void Scene::draw_ui(Engine& app, double avg_fps)
       { vk::SampleCountFlagBits::e8, "8x" },
     };
 
-    auto max_samples = app.device.max_usable_sample_count();
+    auto max_samples = app.device->max_usable_sample_count();
     auto current_samples = pipeline->msaa_samples;
     const char* msaa_label = "Off";
     for (const auto& entry : msaa_table)

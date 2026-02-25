@@ -103,9 +103,9 @@ int main(int argc, char** argv)
   Scene scene(app);
 
   // Populate scene data -- explicit, not hidden in a constructor
-  scene.data.create_fallback_textures(app.device);
-  scene.data.load_model(app.device, app.config.model_path);
-  scene.data.load_ibl(app.device, app.config.hdr_path);
+  scene.data.create_fallback_textures(*app.device);
+  scene.data.load_model(*app.device, app.config.model_path);
+  scene.data.load_ibl(*app.device, app.config.hdr_path);
 
   // Track which config entries are active (for UI combo boxes)
   for (int i = 0; i < static_cast<int>(app.config.model_paths.size()); ++i)
@@ -125,15 +125,15 @@ int main(int argc, char** argv)
   scene.data.camera.set_position(0.0f, 1.5f, 3.0f);
   scene.data.camera.set_focal_point(0.0f, 0.0f, 0.0f);
   scene.data.camera.set_aspect_ratio(
-    static_cast<float>(app.swapchain.extent().width) /
-    static_cast<float>(app.swapchain.extent().height));
+    static_cast<float>(app.swapchain->extent().width) /
+    static_cast<float>(app.swapchain->extent().height));
 
   // Build rendering pipeline from populated data
   scene.build_pipeline();
   input.bind(scene.data.camera);
 
-  spdlog::info("Swapchain images: {}", app.swapchain.image_count());
-  spdlog::info("Present mode: {}", vk::to_string(app.swapchain.present_mode()));
+  spdlog::info("Swapchain images: {}", app.swapchain->image_count());
+  spdlog::info("Present mode: {}", vk::to_string(app.swapchain->present_mode()));
   spdlog::info("Display refresh rate: {} Hz", app.window.refresh_rate());
 
   while (!app.should_close() && !app.frame_limit_reached())
@@ -142,12 +142,12 @@ int main(int argc, char** argv)
 
     if (app.handle_resize())
     {
-      scene.resize(app.swapchain);
+      scene.resize(*app.swapchain);
       continue;
     }
 
     double avg_fps = app.update_fps();
-    scene.update(app.graph);
+    scene.update(*app.graph);
     scene.draw_ui(app, avg_fps);
 
     if (!app.render_frame())
@@ -163,9 +163,9 @@ int main(int argc, char** argv)
   }
 
   // Drain GPU before scene destroys its mesh buffers
-  app.graph.drain();
+  app.graph->drain();
 
-  spdlog::info("Exiting after {} frames", app.graph.cpu_frame());
+  spdlog::info("Exiting after {} frames", app.graph->cpu_frame());
 
   } catch (const vk::SystemError& e) {
     spdlog::critical("Vulkan error: {}", e.what());
