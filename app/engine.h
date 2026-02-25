@@ -8,9 +8,11 @@
 #include <vkwave/core/window.h>
 #include <vkwave/core/windowsurface.h>
 #include <vkwave/pipeline/render_graph.h>
+#include <vkwave/pipeline/shader_compiler.h>
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 
 /// Vulkan infrastructure: window, instance, device, swapchain, render graph.
 struct Engine
@@ -42,11 +44,15 @@ struct Engine
     return config.max_frames > 0 && graph.cpu_frame() >= config.max_frames;
   }
 
+  void set_shader_compiler(std::shared_ptr<vkwave::ShaderCompiler> compiler);
+  vkwave::ShaderCompiler& shader_compiler();
+
   Engine(const Engine&) = delete;
   Engine& operator=(const Engine&) = delete;
 
 private:
   vkwave::Device create_device(const std::string& preferred_gpu);
+  std::shared_ptr<vkwave::ShaderCompiler> m_shader_compiler;
 
   std::chrono::steady_clock::time_point m_fps_time{ std::chrono::steady_clock::now() };
   uint64_t m_fps_frames{ 0 };

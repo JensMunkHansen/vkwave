@@ -42,8 +42,10 @@ ExecutionGroup::ExecutionGroup(
   , m_color_format(swapchain_format)
 {
   // Compile shaders
-  auto vert = ShaderCompiler::compile(spec.vertex_shader, vk::ShaderStageFlagBits::eVertex);
-  auto frag = ShaderCompiler::compile(spec.fragment_shader, vk::ShaderStageFlagBits::eFragment);
+  auto compiler = ShaderCompiler::get();
+  assert(compiler && "ShaderCompiler not created — call ShaderCompiler::create() first");
+  auto vert = compiler->compile(spec.vertex_shader, vk::ShaderStageFlagBits::eVertex);
+  auto frag = compiler->compile(spec.fragment_shader, vk::ShaderStageFlagBits::eFragment);
 
   // Reflect layout
   ShaderReflection reflection;

@@ -52,6 +52,7 @@ if(VKWAVE_FORCE_COLORED_OUTPUT)
 endif()
 
 include(spsVulkan)
+include(spsShaders)
 
 option(BUILD_TESTING "Build tests" ON)
 include(spsTesting)

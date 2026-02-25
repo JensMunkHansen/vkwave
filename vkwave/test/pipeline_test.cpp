@@ -5,11 +5,16 @@
 #include <vkwave/pipeline/shader_compiler.h>
 #include <vkwave/pipeline/shader_reflection.h>
 
+// Ensure a ShaderCompiler instance exists for all tests in this file.
+// The Registered<> weak_ptr keeps it alive as long as this shared_ptr does.
+static auto g_compiler = vkwave::ShaderCompiler::create();
+
 // --- Fullscreen shader tests ---
 
 TEST_CASE("vkwave::pipeline::shader_compiler_compiles_vertex", "[pipeline]")
 {
-  auto result = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto result = compiler->compile(
     TEST_SHADER_DIR "fullscreen.vert", vk::ShaderStageFlagBits::eVertex);
   CHECK(!result.spirv.empty());
   CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
@@ -17,7 +22,8 @@ TEST_CASE("vkwave::pipeline::shader_compiler_compiles_vertex", "[pipeline]")
 
 TEST_CASE("vkwave::pipeline::shader_compiler_compiles_fragment", "[pipeline]")
 {
-  auto result = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto result = compiler->compile(
     TEST_SHADER_DIR "fullscreen.frag", vk::ShaderStageFlagBits::eFragment);
   CHECK(!result.spirv.empty());
   CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
@@ -25,7 +31,8 @@ TEST_CASE("vkwave::pipeline::shader_compiler_compiles_fragment", "[pipeline]")
 
 TEST_CASE("vkwave::pipeline::reflection_extracts_push_constants", "[pipeline]")
 {
-  auto result = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto result = compiler->compile(
     TEST_SHADER_DIR "fullscreen.frag", vk::ShaderStageFlagBits::eFragment);
 
   vkwave::ShaderReflection reflection;
@@ -40,9 +47,10 @@ TEST_CASE("vkwave::pipeline::reflection_extracts_push_constants", "[pipeline]")
 
 TEST_CASE("vkwave::pipeline::reflection_no_descriptors_for_fullscreen", "[pipeline]")
 {
-  auto vert = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto vert = compiler->compile(
     TEST_SHADER_DIR "fullscreen.vert", vk::ShaderStageFlagBits::eVertex);
-  auto frag = vkwave::ShaderCompiler::compile(
+  auto frag = compiler->compile(
     TEST_SHADER_DIR "fullscreen.frag", vk::ShaderStageFlagBits::eFragment);
 
   vkwave::ShaderReflection reflection;
@@ -55,7 +63,8 @@ TEST_CASE("vkwave::pipeline::reflection_no_descriptors_for_fullscreen", "[pipeli
 
 TEST_CASE("vkwave::pipeline::reflection_validates_push_constant_size", "[pipeline]")
 {
-  auto frag = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto frag = compiler->compile(
     TEST_SHADER_DIR "fullscreen.frag", vk::ShaderStageFlagBits::eFragment);
 
   vkwave::ShaderReflection reflection;
@@ -70,7 +79,8 @@ TEST_CASE("vkwave::pipeline::reflection_validates_push_constant_size", "[pipelin
 
 TEST_CASE("vkwave::pipeline::shader_compiler_compiles_cube_vertex", "[pipeline]")
 {
-  auto result = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto result = compiler->compile(
     TEST_SHADER_DIR "cube.vert", vk::ShaderStageFlagBits::eVertex);
   CHECK(!result.spirv.empty());
   CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
@@ -78,7 +88,8 @@ TEST_CASE("vkwave::pipeline::shader_compiler_compiles_cube_vertex", "[pipeline]"
 
 TEST_CASE("vkwave::pipeline::shader_compiler_compiles_cube_fragment", "[pipeline]")
 {
-  auto result = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto result = compiler->compile(
     TEST_SHADER_DIR "cube.frag", vk::ShaderStageFlagBits::eFragment);
   CHECK(!result.spirv.empty());
   CHECK(result.spirv[0] == 0x07230203); // SPIR-V magic number
@@ -86,9 +97,10 @@ TEST_CASE("vkwave::pipeline::shader_compiler_compiles_cube_fragment", "[pipeline
 
 TEST_CASE("vkwave::pipeline::reflection_extracts_cube_ubo", "[pipeline]")
 {
-  auto vert = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto vert = compiler->compile(
     TEST_SHADER_DIR "cube.vert", vk::ShaderStageFlagBits::eVertex);
-  auto frag = vkwave::ShaderCompiler::compile(
+  auto frag = compiler->compile(
     TEST_SHADER_DIR "cube.frag", vk::ShaderStageFlagBits::eFragment);
 
   vkwave::ShaderReflection reflection;
@@ -107,9 +119,10 @@ TEST_CASE("vkwave::pipeline::reflection_extracts_cube_ubo", "[pipeline]")
 
 TEST_CASE("vkwave::pipeline::reflection_extracts_cube_push_constants", "[pipeline]")
 {
-  auto vert = vkwave::ShaderCompiler::compile(
+  auto compiler = vkwave::ShaderCompiler::get();
+  auto vert = compiler->compile(
     TEST_SHADER_DIR "cube.vert", vk::ShaderStageFlagBits::eVertex);
-  auto frag = vkwave::ShaderCompiler::compile(
+  auto frag = compiler->compile(
     TEST_SHADER_DIR "cube.frag", vk::ShaderStageFlagBits::eFragment);
 
   vkwave::ShaderReflection reflection;

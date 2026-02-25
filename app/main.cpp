@@ -2,6 +2,8 @@
 #include "input.h"
 #include "scene.h"
 
+#include <vkwave/pipeline/shader_compiler.h>
+
 #include <imgui.h>
 
 #include <vulkan/vulkan_to_string.hpp>
@@ -64,7 +66,13 @@ int main(int argc, char** argv)
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
 
+  // Create and configure shader compiler before anything builds pipelines
+  auto compiler = vkwave::ShaderCompiler::create();
+  compiler->set_debug_info(kDebug || config.shader_debug);
+  compiler->set_optimization(!kDebug && config.shader_optimize);
+
   Engine app(config);
+  app.set_shader_compiler(compiler);
   Input input;
 
   g_window = app.window.get();

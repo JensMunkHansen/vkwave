@@ -5,6 +5,7 @@
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
+#include <cassert>
 #include <span>
 
 static constexpr bool kDebug =
@@ -77,6 +78,17 @@ bool Engine::handle_resize()
 
   spdlog::info("Resized to {}x{}", w, h);
   return true;
+}
+
+void Engine::set_shader_compiler(std::shared_ptr<vkwave::ShaderCompiler> compiler)
+{
+  m_shader_compiler = std::move(compiler);
+}
+
+vkwave::ShaderCompiler& Engine::shader_compiler()
+{
+  assert(m_shader_compiler && "ShaderCompiler not set — call set_shader_compiler() first");
+  return *m_shader_compiler;
 }
 
 vkwave::Device Engine::create_device(const std::string& preferred_gpu)

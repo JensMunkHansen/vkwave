@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 #include <stb_image.h>
 
+#include <cassert>
 #include <cmath>
 #include <stdexcept>
 
@@ -164,7 +165,9 @@ ComputePipeline create_compute_pipeline(vk::Device dev, const std::string& shade
   result.layout = dev.createPipelineLayout(pl_ci);
 
   // Compile from GLSL source and create shader module
-  auto compiled = ShaderCompiler::compile(shader_path, vk::ShaderStageFlagBits::eCompute);
+  auto compiler = ShaderCompiler::get();
+  assert(compiler && "ShaderCompiler not created — call ShaderCompiler::create() first");
+  auto compiled = compiler->compile(shader_path, vk::ShaderStageFlagBits::eCompute);
   auto module = ShaderCompiler::create_module(dev, compiled.spirv);
 
   vk::PipelineShaderStageCreateInfo stage{};

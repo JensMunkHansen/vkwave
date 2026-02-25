@@ -70,6 +70,8 @@ AppConfig load_config(const std::string& path)
     {
       auto& debug = toml::find(data, "debug");
       cfg.max_frames = toml::find_or<uint64_t>(debug, "max_frames", 0);
+      cfg.shader_debug = toml::find_or(debug, "shader_debug", false);
+      cfg.shader_optimize = toml::find_or(debug, "shader_optimize", false);
     }
 
     spdlog::info("Loaded config from '{}'", path);

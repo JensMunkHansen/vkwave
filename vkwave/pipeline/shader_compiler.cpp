@@ -2,107 +2,132 @@
 
 #include <vkwave/core/instance.h>
 
-#include <shaderc/shaderc.hpp>
+#include <glslang/Public/ShaderLang.h>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
+
+#include <spdlog/spdlog.h>
 
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 
 namespace vkwave
 {
 
-// Derive shaderc targets from Instance::REQUIRED_VK_API_VERSION so
+// Derive glslang targets from Instance::REQUIRED_VK_API_VERSION so
 // the Vulkan version is defined in exactly one place.
 static constexpr auto kVkApiVersion = Instance::REQUIRED_VK_API_VERSION;
 static constexpr uint32_t kVkMinor = VK_API_VERSION_MINOR(kVkApiVersion);
 
-static constexpr shaderc_env_version to_shaderc_env()
+static constexpr glslang::EShTargetClientVersion to_glslang_client_version()
 {
-  if constexpr (kVkMinor >= 3) return shaderc_env_version_vulkan_1_3;
-  if constexpr (kVkMinor >= 2) return shaderc_env_version_vulkan_1_2;
-  if constexpr (kVkMinor >= 1) return shaderc_env_version_vulkan_1_1;
-  return shaderc_env_version_vulkan_1_0;
+  if constexpr (kVkMinor >= 3) return glslang::EShTargetVulkan_1_3;
+  if constexpr (kVkMinor >= 2) return glslang::EShTargetVulkan_1_2;
+  if constexpr (kVkMinor >= 1) return glslang::EShTargetVulkan_1_1;
+  return glslang::EShTargetVulkan_1_0;
 }
 
-static constexpr shaderc_spirv_version to_shaderc_spirv()
+static constexpr glslang::EShTargetLanguageVersion to_glslang_spirv_version()
 {
-  if constexpr (kVkMinor >= 3) return shaderc_spirv_version_1_6;
-  if constexpr (kVkMinor >= 2) return shaderc_spirv_version_1_5;
-  if constexpr (kVkMinor >= 1) return shaderc_spirv_version_1_3;
-  return shaderc_spirv_version_1_0;
+  if constexpr (kVkMinor >= 3) return glslang::EShTargetSpv_1_6;
+  if constexpr (kVkMinor >= 2) return glslang::EShTargetSpv_1_5;
+  if constexpr (kVkMinor >= 1) return glslang::EShTargetSpv_1_3;
+  return glslang::EShTargetSpv_1_0;
 }
 
-static shaderc_shader_kind to_shaderc_kind(vk::ShaderStageFlagBits stage)
+static EShLanguage to_glslang_stage(vk::ShaderStageFlagBits stage)
 {
   switch (stage)
   {
-  case vk::ShaderStageFlagBits::eVertex: return shaderc_vertex_shader;
-  case vk::ShaderStageFlagBits::eFragment: return shaderc_fragment_shader;
-  case vk::ShaderStageFlagBits::eCompute: return shaderc_compute_shader;
-  case vk::ShaderStageFlagBits::eGeometry: return shaderc_geometry_shader;
-  case vk::ShaderStageFlagBits::eTessellationControl: return shaderc_tess_control_shader;
-  case vk::ShaderStageFlagBits::eTessellationEvaluation: return shaderc_tess_evaluation_shader;
+  case vk::ShaderStageFlagBits::eVertex:                 return EShLangVertex;
+  case vk::ShaderStageFlagBits::eFragment:               return EShLangFragment;
+  case vk::ShaderStageFlagBits::eCompute:                return EShLangCompute;
+  case vk::ShaderStageFlagBits::eGeometry:               return EShLangGeometry;
+  case vk::ShaderStageFlagBits::eTessellationControl:    return EShLangTessControl;
+  case vk::ShaderStageFlagBits::eTessellationEvaluation: return EShLangTessEvaluation;
   default:
     throw std::runtime_error("Unsupported shader stage for compilation");
   }
 }
 
 /// Resolve #include directives relative to the including file's directory.
-class FileIncluder : public shaderc::CompileOptions::IncluderInterface
+class FileIncluder : public glslang::TShader::Includer
 {
 public:
   explicit FileIncluder(std::string base_dir)
     : m_base_dir(std::move(base_dir)) {}
 
-  shaderc_include_result* GetInclude(
-    const char* requested_source,
-    shaderc_include_type /*type*/,
-    const char* /*requesting_source*/,
-    size_t /*include_depth*/) override
+  IncludeResult* includeLocal(
+    const char* header_name,
+    const char* includer_name,
+    size_t /*inclusion_depth*/) override
   {
-    auto path = std::filesystem::path(m_base_dir) / requested_source;
-    auto* result = new shaderc_include_result;
+    // Resolve relative to the includer's directory, falling back to base dir
+    std::filesystem::path dir;
+    if (includer_name[0])
+      dir = std::filesystem::path(includer_name).parent_path();
+    if (dir.empty())
+      dir = m_base_dir;
+    auto path = dir / header_name;
 
     std::ifstream file(path);
     if (!file.is_open())
-    {
-      m_error = "Failed to open include: " + path.string();
-      result->source_name = "";
-      result->source_name_length = 0;
-      result->content = m_error.c_str();
-      result->content_length = m_error.size();
-      result->user_data = nullptr;
-      return result;
-    }
+      return nullptr;
 
     std::ostringstream ss;
     ss << file.rdbuf();
-    m_content = ss.str();
-    m_name = path.string();
+    auto* content = new std::string(ss.str());
+    auto resolved = path.string();
 
-    result->source_name = m_name.c_str();
-    result->source_name_length = m_name.size();
-    result->content = m_content.c_str();
-    result->content_length = m_content.size();
-    result->user_data = nullptr;
-    return result;
+    return new IncludeResult(resolved, content->c_str(), content->size(), content);
   }
 
-  void ReleaseInclude(shaderc_include_result* data) override
+  IncludeResult* includeSystem(
+    const char* header_name,
+    const char* includer_name,
+    size_t inclusion_depth) override
   {
-    delete data;
+    // Fall back to local include resolution for system includes
+    return includeLocal(header_name, includer_name, inclusion_depth);
+  }
+
+  void releaseInclude(IncludeResult* result) override
+  {
+    if (result)
+    {
+      delete static_cast<std::string*>(result->userData);
+      delete result;
+    }
   }
 
 private:
   std::string m_base_dir;
-  std::string m_content;
-  std::string m_name;
-  std::string m_error;
 };
 
+// glslang requires exactly one InitializeProcess() per process lifetime.
+static std::once_flag g_glslang_init;
+static bool g_glslang_initialized = false;
+
+ShaderCompiler::ShaderCompiler()
+{
+  std::call_once(g_glslang_init, [] {
+    glslang::InitializeProcess();
+    g_glslang_initialized = true;
+    spdlog::debug("glslang initialized");
+  });
+}
+
+ShaderCompiler::~ShaderCompiler()
+{
+  // Don't finalize — other ShaderCompiler instances or late compilations
+  // may still need glslang. Process-exit cleanup is fine.
+}
+
 ShaderCompiler::Result ShaderCompiler::compile(
-  const std::string& filepath, vk::ShaderStageFlagBits stage)
+  const std::string& filepath, vk::ShaderStageFlagBits stage) const
 {
   // Read GLSL source from file
   std::ifstream file(filepath);
@@ -113,43 +138,80 @@ ShaderCompiler::Result ShaderCompiler::compile(
   ss << file.rdbuf();
   std::string source = ss.str();
 
-  // Configure compiler
-  shaderc::Compiler compiler;
-  shaderc::CompileOptions options;
-  options.SetTargetEnvironment(shaderc_target_env_vulkan, to_shaderc_env());
-  options.SetTargetSpirv(to_shaderc_spirv());
-
-  // Enable #include resolution relative to the shader's directory
-  auto shader_dir = std::filesystem::path(filepath).parent_path().string();
-  options.SetIncluder(std::make_unique<FileIncluder>(shader_dir));
-
-#ifdef NDEBUG
-  options.SetOptimizationLevel(shaderc_optimization_level_performance);
-#else
-  options.SetOptimizationLevel(shaderc_optimization_level_zero);
-#endif
-
-  // Always generate debug info — SPIRV-Reflect needs binding names
-  // for descriptor lookup (stripped by performance optimization otherwise).
-  options.SetGenerateDebugInfo();
-
   // Extract filename for error messages
   auto slash = filepath.find_last_of("/\\");
   std::string filename = (slash != std::string::npos)
     ? filepath.substr(slash + 1)
     : filepath;
 
-  // Compile
-  auto result = compiler.CompileGlslToSpv(
-    source, to_shaderc_kind(stage), filename.c_str(), options);
+  // Set up glslang shader
+  auto lang_stage = to_glslang_stage(stage);
+  glslang::TShader shader(lang_stage);
+
+  const char* source_cstr = source.c_str();
+  const int source_len = static_cast<int>(source.size());
+  const char* name_cstr = filename.c_str();
+  shader.setStringsWithLengthsAndNames(&source_cstr, &source_len, &name_cstr, 1);
+  shader.setEntryPoint("main");
+  shader.setSourceEntryPoint("main");
+
+  if (m_debug_info)
+    shader.setDebugInfo(true);
+
+  shader.setEnvInput(glslang::EShSourceGlsl, lang_stage,
+    glslang::EShClientVulkan, 100);
+  shader.setEnvClient(glslang::EShClientVulkan, to_glslang_client_version());
+  shader.setEnvTarget(glslang::EShTargetSpv, to_glslang_spirv_version());
+
+  // Parse messages — Vulkan + SPIR-V rules, optionally debug info
+  auto messages = static_cast<EShMessages>(
+    EShMsgSpvRules | EShMsgVulkanRules);
+  if (m_debug_info)
+    messages = static_cast<EShMessages>(messages | EShMsgDebugInfo);
+
+  // Include resolution relative to the shader's directory
+  auto shader_dir = std::filesystem::path(filepath).parent_path().string();
+  FileIncluder includer(shader_dir);
+
+  // Parse
+  if (!shader.parse(GetDefaultResources(), 460, ENoProfile, false, false,
+      messages, includer))
+  {
+    throw std::runtime_error(
+      "Shader parsing failed (" + filepath + "):\n" + shader.getInfoLog());
+  }
+
+  // Link
+  glslang::TProgram program;
+  program.addShader(&shader);
+
+  if (!program.link(messages))
+  {
+    throw std::runtime_error(
+      "Shader linking failed (" + filepath + "):\n" + program.getInfoLog());
+  }
+
+  // Generate SPIR-V
+  glslang::SpvOptions spv_options{};
+  spv_options.generateDebugInfo = true; // Always — SPIRV-Reflect needs binding names
+  spv_options.disableOptimizer = !m_optimize;
+
+  if (m_debug_info)
+  {
+    spv_options.emitNonSemanticShaderDebugInfo = true;
+    spv_options.emitNonSemanticShaderDebugSource = true;
+  }
 
   Result out;
-  out.log = result.GetErrorMessage();
+  spv::SpvBuildLogger spv_logger;
+  glslang::GlslangToSpv(
+    *program.getIntermediate(lang_stage), out.spirv,
+    &spv_logger, &spv_options);
 
-  if (result.GetCompilationStatus() != shaderc_compilation_status_success)
-    throw std::runtime_error("Shader compilation failed (" + filepath + "):\n" + out.log);
+  out.log = spv_logger.getAllMessages();
+  if (!out.log.empty())
+    spdlog::debug("SPIR-V gen ({}): {}", filename, out.log);
 
-  out.spirv.assign(result.cbegin(), result.cend());
   return out;
 }
 

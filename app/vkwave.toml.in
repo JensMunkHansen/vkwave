@@ -34,3 +34,5 @@ use_x11 = false             # force X11 instead of Wayland
 
 [debug]
 max_frames = @VKWAVE_MAX_FRAMES@  # 0 = unlimited, >0 = exit after N frames (coverage builds)
+shader_debug = true     # emit NonSemantic debug info (real variable names in RenderDoc/Nsight)
+shader_optimize = false # disable SPIR-V optimizer for debuggability

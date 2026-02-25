@@ -94,7 +94,9 @@ target_link_libraries(${TARGET_NAME}
   Vulkan::Vulkan
   imgui::imgui
   spirv-reflect::spirv-reflect-static
-  vkwave::shaderc
+  glslang::glslang
+  glslang::SPIRV
+  glslang::glslang-default-resource-limits
   ${CMAKE_THREAD_LIBS_INIT}
   ${CMAKE_DL_LIBS}
 )
