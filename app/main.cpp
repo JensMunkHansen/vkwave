@@ -115,6 +115,20 @@ int main(int argc, char** argv)
   // Populate scene data -- explicit, not hidden in a constructor
   scene.data.create_fallback_textures(*app.device);
   scene.data.load_model(*app.device, app.config.model_path);
+  // Apply default_hdr_index: override hdr_path from hdr_paths if index is valid
+  if (app.config.default_hdr_index >= 0
+    && app.config.default_hdr_index < static_cast<int>(app.config.hdr_paths.size()))
+  {
+    app.config.hdr_path = app.config.hdr_paths[app.config.default_hdr_index];
+  }
+  else if (app.config.default_hdr_index >= 0)
+  {
+    spdlog::warn("default_hdr_index {} out of range (0..{}), falling back to 0",
+      app.config.default_hdr_index, app.config.hdr_paths.size() - 1);
+    if (!app.config.hdr_paths.empty())
+      app.config.hdr_path = app.config.hdr_paths[0];
+  }
+
   scene.data.load_ibl(*app.device, app.config.hdr_path);
 
   // Track which config entries are active (for UI combo boxes)
@@ -131,6 +145,11 @@ int main(int argc, char** argv)
   }
   if (scene.data.current_hdr_index < 0 && !app.config.hdr_paths.empty())
     scene.data.current_hdr_index = 0;
+
+  // Apply default tonemap from config (clamp to valid range, fall back to 0)
+  constexpr int kMaxTonemapIndex = 5;
+  int tm = app.config.default_tonemap_index;
+  scene.composite_pass.tonemap_mode = (tm >= 0 && tm <= kMaxTonemapIndex) ? tm : 0;
 
   // Fit camera to loaded model bounds
   if (scene.data.gltf_scene.bounds.valid())

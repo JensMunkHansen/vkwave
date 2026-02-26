@@ -23,6 +23,8 @@ hdr_paths = [
     "@CMAKE_SOURCE_DIR@/data/surgery.hdr",
     "@CMAKE_SOURCE_DIR@/data/childrens_hospital.hdr",
 ]
+default_hdr_index = 1               # index into hdr_paths (0=footprint_court, 1=neutral, ...), clamped to valid range
+default_tonemap_index = 5            # 0=None 1=Reinhard 2=ACES(Fast) 3=ACES(Hill) 4=ACES+Boost 5=KhronosPBRNeutral
 
 [window]
 title = "vkwave"

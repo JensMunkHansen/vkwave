@@ -30,6 +30,8 @@ struct AppConfig
   std::vector<std::string> model_paths;  // available models for runtime switching
   std::string hdr_path;                  // initial HDR environment (empty = default neutral)
   std::vector<std::string> hdr_paths;    // all available HDR environments for runtime switching
+  int default_hdr_index{ -1 };           // index into hdr_paths, -1 = use hdr_path, clamped to valid range
+  int default_tonemap_index{ 5 };        // 0=None 1=Reinhard 2=ACES(Fast) 3=ACES(Hill) 4=ACES+Boost 5=KhronosPBRNeutral
 
   // [debug]
   uint64_t max_frames{ 0 };      // 0 = unlimited, >0 = exit after N frames

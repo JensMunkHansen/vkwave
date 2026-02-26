@@ -63,6 +63,8 @@ AppConfig load_config(const std::string& path)
         auto arr = toml::find<std::vector<std::string>>(scene, "hdr_paths");
         cfg.hdr_paths = std::move(arr);
       }
+      cfg.default_hdr_index = toml::find_or<int>(scene, "default_hdr_index", -1);
+      cfg.default_tonemap_index = toml::find_or<int>(scene, "default_tonemap_index", 5);
     }
 
     // [debug]
