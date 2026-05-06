@@ -1,0 +1,9 @@
+{
+    "extension_api": 1,
+    "name": "Compute Pixel Debug",
+    "version": "1.0",
+    "minimum_renderdoc": "1.40",
+    "description": "Right-click a pixel in the Texture Viewer, then Tools -> 'Debug compute thread for picked pixel' to launch the compute shader debugger at the thread that produced or consumed that pixel. Computes (Group, Thread) from the bound compute shader's local_size automatically.",
+    "author": "Jens Munk Hansen <jens.hansen@3shape.com>",
+    "url": ""
+}
