@@ -54,6 +54,7 @@ endif()
 
 include(spsVulkan)
 include(spsShaders)
+include(spsRenderDoc)
 
 option(BUILD_TESTING "Build tests" ON)
 include(spsTesting)

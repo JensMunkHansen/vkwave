@@ -46,6 +46,11 @@ struct Scene
   std::vector<uint8_t> screenshot_png;
   std::string screenshot_filename;
 
+  // RenderDoc: one-shot flag — wraps the next switch_ibl() in
+  // RenderDoc::begin_capture()/end_capture() so the IBL compute submissions
+  // are visible in the capture (they run outside any swapchain present).
+  bool capture_next_ibl_reload{ false };
+
   explicit Scene(Engine& engine);
   ~Scene();
 

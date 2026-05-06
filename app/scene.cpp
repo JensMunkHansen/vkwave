@@ -2,6 +2,7 @@
 #include "engine.h"
 #include "screenshot.h"
 
+#include <vkwave/core/renderdoc.h>
 #include <vkwave/core/swapchain.h>
 
 #include <vulkan/vulkan_to_string.hpp>
@@ -154,8 +155,22 @@ void Scene::switch_model(const std::string& model_path)
 void Scene::switch_ibl(const std::string& hdr_path)
 {
   m_engine->graph->drain();
+
+  const bool capture = capture_next_ibl_reload && vkwave::RenderDoc::is_attached();
+  capture_next_ibl_reload = false;
+  if (capture)
+    vkwave::RenderDoc::begin_capture();
+
   data.load_ibl(*m_engine->device, hdr_path);
   pipeline->write_ibl_descriptors(data);
+
+  if (capture)
+  {
+    // EndFrameCapture submits its own work — make sure all IBL compute is
+    // retired before we close the capture scope.
+    m_engine->graph->drain();
+    vkwave::RenderDoc::end_capture();
+  }
 }
 
 void Scene::rebuild_pipeline(vk::SampleCountFlagBits new_samples)
@@ -344,6 +359,21 @@ void Scene::draw_ui(Engine& app, double avg_fps)
           ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
+    }
+
+    // RenderDoc: arm a one-shot capture for the next IBL switch. The IBL
+    // compute submissions live outside any swapchain present, so the
+    // hotkey-based capture flow can't see them.
+    if (vkwave::RenderDoc::is_attached())
+    {
+      ImGui::Checkbox("Capture next IBL (RenderDoc)", &capture_next_ibl_reload);
+    }
+    else
+    {
+      ImGui::BeginDisabled();
+      bool dummy = false;
+      ImGui::Checkbox("Capture next IBL (RenderDoc not attached)", &dummy);
+      ImGui::EndDisabled();
     }
   }
 

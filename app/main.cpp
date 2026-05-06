@@ -3,6 +3,7 @@
 #include "scene.h"
 #include "screenshot.h"
 
+#include <vkwave/core/renderdoc.h>
 #include <vkwave/pipeline/shader_compiler.h>
 
 #include <imgui.h>
@@ -54,6 +55,10 @@ int main(int argc, char** argv)
   spdlog::set_level(kDebug ? spdlog::level::debug : spdlog::level::info);
   spdlog::info("vkwave -- async GPU rendering engine");
 
+  // Resolve the RenderDoc API if launched under RenderDoc. Always safe to
+  // call; becomes a no-op when the capture library isn't attached.
+  vkwave::RenderDoc::initialize();
+
   try {
 
   auto maybe_config = load_config_with_cli(argc, argv);
@@ -83,6 +88,8 @@ int main(int argc, char** argv)
 
   Engine app(config);
   app.set_shader_compiler(compiler);
+  // Bind RenderDoc to our Vulkan instance so user-defined captures aren't empty.
+  vkwave::RenderDoc::set_vulkan_instance(app.instance.instance());
   Input input;
 
   g_window = app.window.get();

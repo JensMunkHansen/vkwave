@@ -51,6 +51,7 @@ add_library(${TARGET_NAME}
   core/representation.cpp
   core/frame_resources.cpp
   core/timeline_semaphore.cpp
+  core/renderdoc.cpp
   # pipeline
   pipeline/shaders.cpp
   pipeline/shader_compiler.cpp
@@ -106,6 +107,12 @@ target_compile_definitions(${TARGET_NAME}
   PUBLIC VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
   PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE
 )
+
+# Optional RenderDoc programmatic capture API (header-only, runtime-loaded).
+if(VKWAVE_HAVE_RENDERDOC)
+  target_link_libraries(${TARGET_NAME} PRIVATE vkwave::renderdoc_headers)
+  target_compile_definitions(${TARGET_NAME} PRIVATE VKWAVE_HAVE_RENDERDOC=1)
+endif()
 
 
 # LTO for GCC/Clang only — MSVC 14.44 /GL triggers ICE (C1001) during LTCG
