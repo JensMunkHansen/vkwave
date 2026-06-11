@@ -1,0 +1,77 @@
+name: Build (Linux GCC)
+
+# Manual-only: no push or pull_request triggers. This is deliberate — the
+# workflow can be merged to main in any state (even half-finished) without ever
+# auto-running, so a heavy/failing build never fires on every commit. Trigger it
+# explicitly from the Actions tab ("Run workflow") and pick the branch to build.
+# Note: the "Run workflow" button only appears once this file exists on the
+# default branch (main); from there you may dispatch it against any branch.
+on:
+  workflow_dispatch:
+    inputs:
+      build-type:
+        description: "Build configuration"
+        required: true
+        default: Debug
+        type: choice
+        options: [Debug, Release]
+      run-tests:
+        description: "Run Catch2 tests (best-effort, software Vulkan)"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: ci-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04   # ships CMake >= 3.24 (preset requirement) + Ninja
+    env:
+      CC: gcc
+      CXX: g++
+    steps:
+      # .gitmodules points the public CMake/ submodule at an SSH URL
+      # (git@github.com:...), but the runner has no SSH key. Rewrite SSH->HTTPS
+      # globally so checkout fetches the public submodule anonymously over HTTPS.
+      # Done in-CI only; .gitmodules (and the local SSH workflow) stay unchanged.
+      - name: Use HTTPS for GitHub submodules
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Checkout (with shared CMake submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive   # CMake/ holds spsSBOM/spsShaders/etc.
+          fetch-depth: 1          # shallow — the build has no git-describe/history dependence,
+                                  # so don't clone the CMake submodule's (or repo's) history
+
+      # System tier (apt, every run): Vulkan loader+headers+vulkan.hpp, glslang
+      # C++ API, glm, GLFW's X11/Wayland build headers, and a software Vulkan ICD
+      # (lavapipe) so headless tests can at least attempt to run.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config \
+            libvulkan-dev glslang-dev libglm-dev \
+            xorg-dev libwayland-dev wayland-protocols libxkbcommon-dev \
+            mesa-vulkan-drivers
+
+      # Source-built tier (cached): the 9 pinned deps into ~/vkwavepkg.
+      - name: Build & cache dependencies (vkwavepkg)
+        uses: ./.github/actions/linux-deps-setup
+
+      - name: Configure (linux-gcc preset)
+        run: cmake --preset linux-gcc -DVKWAVE_FETCH_ASSETS=OFF
+
+      - name: Build (${{ inputs.build-type }})
+        run: cmake --build build/linux-gcc --config ${{ inputs.build-type }}
+
+      # Best-effort: the runner has no GPU, only software Vulkan (lavapipe), so a
+      # test that demands a real device may fail. Keep it non-blocking until we
+      # know which tests run headlessly; the build above is the hard gate.
+      - name: Test (${{ inputs.build-type }})
+        if: ${{ inputs.run-tests }}
+        continue-on-error: true
+        run: ctest --test-dir build/linux-gcc -C ${{ inputs.build-type }} --output-on-failure
