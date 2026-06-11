@@ -73,7 +73,11 @@ void SceneData::create_fallback_textures(const vkwave::Device& device)
   fallback_normal = std::make_unique<vkwave::Texture>(
     device, "fallback_normal", flat_normal, 1, 1, true);
 
-  const uint8_t default_mr[] = { 0, 128, 0, 255 };
+  // All-ones so material metallic/roughness FACTORS pass through unchanged for
+  // materials with no metallicRoughnessTexture (glTF multiplies texture x factor;
+  // an absent texture == 1.0). A non-white fallback zeroes metallic on
+  // factor-only materials (e.g. AnisotropyDiscTest's metallic=1 discs).
+  const uint8_t default_mr[] = { 255, 255, 255, 255 };
   fallback_mr = std::make_unique<vkwave::Texture>(
     device, "fallback_mr", default_mr, 1, 1, true);
 
