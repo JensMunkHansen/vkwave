@@ -54,7 +54,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ninja-build pkg-config \
-            libvulkan-dev glslang-dev libglm-dev \
+            libvulkan-dev glslang-dev glslang-tools libglm-dev \
             xorg-dev libwayland-dev wayland-protocols libxkbcommon-dev \
             mesa-vulkan-drivers
 
