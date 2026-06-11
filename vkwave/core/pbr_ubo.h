@@ -23,9 +23,13 @@ static_assert(sizeof(PbrUBO) == 112,
 
 /// Push constant flags for toggling PBR features.
 namespace PbrFlags {
-  constexpr uint32_t NormalMapping = 1u << 0;
-  constexpr uint32_t Emissive     = 1u << 1;
-  constexpr uint32_t All          = NormalMapping | Emissive;
+  constexpr uint32_t NormalMapping     = 1u << 0;
+  constexpr uint32_t Emissive          = 1u << 1;
+  constexpr uint32_t Clearcoat         = 1u << 2; // apply KHR_materials_clearcoat layer
+  constexpr uint32_t ClearcoatNormalMap = 1u << 3; // coat has a dedicated normal texture
+  constexpr uint32_t Anisotropy        = 1u << 4; // apply KHR_materials_anisotropy
+  constexpr uint32_t AnisotropyMap     = 1u << 5; // anisotropy has a direction texture
+  constexpr uint32_t All               = NormalMapping | Emissive | Clearcoat | Anisotropy;
 }
 
 /// Push constant data for the PBR pass.
@@ -41,10 +45,14 @@ struct PbrPushConstants
   uint32_t flags;            //  4 bytes — PbrFlags bitmask
   uint32_t alphaMode;        //  4 bytes — 0=opaque, 1=mask, 2=blend
   float alphaCutoff;         //  4 bytes — cutoff for alpha mask mode
-};                           // 108 bytes total
+  float clearcoatFactor;     //  4 bytes — KHR_materials_clearcoat strength
+  float clearcoatRoughnessFactor; // 4 bytes — KHR_materials_clearcoat roughness
+  float anisotropyStrength;  //  4 bytes — KHR_materials_anisotropy strength
+  float anisotropyRotation;  //  4 bytes — KHR_materials_anisotropy rotation (radians)
+};                           // 124 bytes total
 
-static_assert(sizeof(PbrPushConstants) == 108,
-  "PbrPushConstants must be 108 bytes to match shader layout");
+static_assert(sizeof(PbrPushConstants) == 124,
+  "PbrPushConstants must be 124 bytes to match shader layout");
 static_assert(sizeof(PbrPushConstants) <= 128,
   "Push constants must fit in 128 bytes (guaranteed minimum)");
 

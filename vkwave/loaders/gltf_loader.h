@@ -120,6 +120,22 @@ struct SceneMaterial
   // KHR_materials_transmission (proxy for diffuse_transmission)
   float transmissionFactor{0.0f};
 
+  // KHR_materials_clearcoat — thin dielectric film (IOR 1.5) over the base.
+  // Textures (when present) multiply the scalar factors; coat normal is separate.
+  std::unique_ptr<Texture> clearcoatTexture;          // R = strength multiplier
+  std::unique_ptr<Texture> clearcoatRoughnessTexture; // G = roughness multiplier
+  std::unique_ptr<Texture> clearcoatNormalTexture;    // tangent-space coat normal
+  float clearcoatFactor{0.0f};
+  float clearcoatRoughnessFactor{0.0f};
+  bool hasClearcoatNormal{false};
+
+  // KHR_materials_anisotropy — elongated specular highlight along a tangent
+  // direction. Texture (when present) encodes RG = direction, B = strength.
+  std::unique_ptr<Texture> anisotropyTexture;
+  float anisotropyStrength{0.0f};
+  float anisotropyRotation{0.0f}; // radians
+  bool hasAnisotropyTexture{false};
+
   // When true, no explicit transmission data exists — shader derives
   // per-pixel transmission from thickness texture via exp(-thickness * k).
   // When false, transmissionFactor (and future transmission texture) are authoritative.

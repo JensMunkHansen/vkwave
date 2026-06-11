@@ -70,6 +70,10 @@ set(_GLB_MODELS
   CompareMetallic
   AlphaBlendModeTest
   ScatteringSkull
+  ClearCoatTest      # KHR_materials_clearcoat conformance test (base/coat/coated columns)
+  ClearCoatCarPaint  # car-paint clearcoat demo
+  CompareAnisotropy  # KHR_materials_anisotropy A/B (with vs without)
+  AnisotropyDiscTest # KHR_materials_anisotropy texture-driven direction
 )
 
 foreach(_model IN LISTS _GLB_MODELS)

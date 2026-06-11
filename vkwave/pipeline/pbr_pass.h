@@ -40,6 +40,19 @@ struct PBRContext
   // Feature toggles
   bool enable_normal_mapping{ true };
   bool enable_emissive{ true };
+  bool enable_clearcoat{ true };
+  bool enable_anisotropy{ true };
+
+  // Optional global clear-coat override (non-glTF authoring convenience).
+  // When >= 0, replaces each material's clearcoatFactor so coat can be
+  // previewed on assets that don't author KHR_materials_clearcoat.
+  float clearcoat_override{ -1.0f };
+  float clearcoat_roughness_override{ 0.1f };
+
+  // Optional global anisotropy override (non-glTF). When >= 0, forces the
+  // strength onto every material; rotation applies with it.
+  float anisotropy_override{ -1.0f };
+  float anisotropy_rotation_override{ 0.0f };
 
   // Light (directional)
   glm::vec3 light_direction{ 1.0f, 1.0f, 1.0f };

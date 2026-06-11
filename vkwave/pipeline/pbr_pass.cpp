@@ -80,7 +80,9 @@ void PBRPass::record(vk::CommandBuffer cmd) const
   const auto stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
 
   auto make_pc = [&](const glm::mat4& m, glm::vec4 bcf, float met, float rough,
-                      uint32_t alpha_mode, float alpha_cutoff) -> PbrPushConstants
+                      uint32_t alpha_mode, float alpha_cutoff,
+                      float cc_factor, float cc_rough, bool cc_has_normal,
+                      float ani_strength, float ani_rotation, bool ani_has_tex) -> PbrPushConstants
   {
     PbrPushConstants pc{};
     pc.model = m;
@@ -94,6 +96,20 @@ void PBRPass::record(vk::CommandBuffer cmd) const
     if (ctx->enable_emissive)       pc.flags |= PbrFlags::Emissive;
     pc.alphaMode = alpha_mode;
     pc.alphaCutoff = alpha_cutoff;
+
+    // Clear coat: a global override (>= 0) forces the factor onto every
+    // material; otherwise use the material's authored values.
+    const bool overridden = ctx->clearcoat_override >= 0.0f;
+    pc.clearcoatFactor = overridden ? ctx->clearcoat_override : cc_factor;
+    pc.clearcoatRoughnessFactor = overridden ? ctx->clearcoat_roughness_override : cc_rough;
+    if (ctx->enable_clearcoat) pc.flags |= PbrFlags::Clearcoat;
+    if (cc_has_normal)         pc.flags |= PbrFlags::ClearcoatNormalMap;
+
+    const bool aniOverridden = ctx->anisotropy_override >= 0.0f;
+    pc.anisotropyStrength = aniOverridden ? ctx->anisotropy_override : ani_strength;
+    pc.anisotropyRotation = aniOverridden ? ctx->anisotropy_rotation_override : ani_rotation;
+    if (ctx->enable_anisotropy) pc.flags |= PbrFlags::Anisotropy;
+    if (ani_has_tex)            pc.flags |= PbrFlags::AnisotropyMap;
     return pc;
   };
 
@@ -107,7 +123,8 @@ void PBRPass::record(vk::CommandBuffer cmd) const
   if (!ctx->primitives || ctx->primitive_count == 0)
   {
     bind_material(0);
-    auto pc = make_pc(model, base_color_factor, metallic_factor, roughness_factor, 0, 0.5f);
+    auto pc = make_pc(model, base_color_factor, metallic_factor, roughness_factor, 0, 0.5f,
+      0.0f, 0.0f, false, 0.0f, 0.0f, false);
     cmd.pushConstants(layout, stages, 0, sizeof(PbrPushConstants), &pc);
     cmd.setDepthWriteEnableEXT(VK_TRUE);
     cmd.setCullModeEXT(vk::CullModeFlagBits::eBack);
@@ -137,7 +154,9 @@ void PBRPass::record(vk::CommandBuffer cmd) const
 
     auto pc = make_pc(prim.modelMatrix, mat.baseColorFactor,
       mat.metallicFactor, mat.roughnessFactor,
-      static_cast<uint32_t>(mat.alphaMode), mat.alphaCutoff);
+      static_cast<uint32_t>(mat.alphaMode), mat.alphaCutoff,
+      mat.clearcoatFactor, mat.clearcoatRoughnessFactor, mat.hasClearcoatNormal,
+      mat.anisotropyStrength, mat.anisotropyRotation, mat.hasAnisotropyTexture);
     cmd.pushConstants(layout, stages, 0, sizeof(PbrPushConstants), &pc);
     ctx->mesh->draw_indexed(cmd, prim.indexCount, prim.firstIndex, prim.vertexOffset);
   }
@@ -162,7 +181,9 @@ void BlendPass::record(vk::CommandBuffer cmd) const
   };
 
   auto make_pc = [&](const glm::mat4& m, glm::vec4 bcf, float met, float rough,
-                      uint32_t alpha_mode, float alpha_cutoff) -> PbrPushConstants
+                      uint32_t alpha_mode, float alpha_cutoff,
+                      float cc_factor, float cc_rough, bool cc_has_normal,
+                      float ani_strength, float ani_rotation, bool ani_has_tex) -> PbrPushConstants
   {
     PbrPushConstants pc{};
     pc.model = m;
@@ -176,6 +197,18 @@ void BlendPass::record(vk::CommandBuffer cmd) const
     if (ctx->enable_emissive)       pc.flags |= PbrFlags::Emissive;
     pc.alphaMode = alpha_mode;
     pc.alphaCutoff = alpha_cutoff;
+
+    const bool overridden = ctx->clearcoat_override >= 0.0f;
+    pc.clearcoatFactor = overridden ? ctx->clearcoat_override : cc_factor;
+    pc.clearcoatRoughnessFactor = overridden ? ctx->clearcoat_roughness_override : cc_rough;
+    if (ctx->enable_clearcoat) pc.flags |= PbrFlags::Clearcoat;
+    if (cc_has_normal)         pc.flags |= PbrFlags::ClearcoatNormalMap;
+
+    const bool aniOverridden = ctx->anisotropy_override >= 0.0f;
+    pc.anisotropyStrength = aniOverridden ? ctx->anisotropy_override : ani_strength;
+    pc.anisotropyRotation = aniOverridden ? ctx->anisotropy_rotation_override : ani_rotation;
+    if (ctx->enable_anisotropy) pc.flags |= PbrFlags::Anisotropy;
+    if (ani_has_tex)            pc.flags |= PbrFlags::AnisotropyMap;
     return pc;
   };
 
@@ -221,7 +254,9 @@ void BlendPass::record(vk::CommandBuffer cmd) const
 
     auto pc = make_pc(prim.modelMatrix, mat.baseColorFactor,
       mat.metallicFactor, mat.roughnessFactor,
-      static_cast<uint32_t>(mat.alphaMode), mat.alphaCutoff);
+      static_cast<uint32_t>(mat.alphaMode), mat.alphaCutoff,
+      mat.clearcoatFactor, mat.clearcoatRoughnessFactor, mat.hasClearcoatNormal,
+      mat.anisotropyStrength, mat.anisotropyRotation, mat.hasAnisotropyTexture);
     cmd.pushConstants(layout, stages, 0, sizeof(PbrPushConstants), &pc);
     ctx->mesh->draw_indexed(cmd, prim.indexCount, prim.firstIndex, prim.vertexOffset);
   }

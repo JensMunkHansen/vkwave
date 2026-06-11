@@ -319,7 +319,7 @@ void Scene::draw_ui(Engine& app, double avg_fps)
   // PBR debug modes
   const char* debug_modes[] = {
     "Final", "Normals", "Base Color", "Metallic",
-    "Roughness", "AO", "Emissive"
+    "Roughness", "AO", "Emissive", "Clearcoat", "Anisotropy"
   };
   ImGui::Combo("Debug Mode", &pbr_ctx.debug_mode, debug_modes, IM_ARRAYSIZE(debug_modes));
 
@@ -419,6 +419,35 @@ void Scene::draw_ui(Engine& app, double avg_fps)
   ImGui::Text("Features");
   ImGui::Checkbox("Normal Mapping", &pbr_ctx.enable_normal_mapping);
   ImGui::Checkbox("Emissive", &pbr_ctx.enable_emissive);
+  ImGui::Checkbox("Clear Coat", &pbr_ctx.enable_clearcoat);
+
+  // Global clear-coat override (non-glTF): force a coat onto every material so
+  // the effect can be previewed on assets that don't author KHR_materials_clearcoat.
+  static bool cc_override = false;
+  static float cc_strength = 1.0f;
+  if (ImGui::Checkbox("Override Clear Coat", &cc_override))
+    pbr_ctx.clearcoat_override = cc_override ? cc_strength : -1.0f;
+  if (cc_override)
+  {
+    if (ImGui::SliderFloat("Coat Strength", &cc_strength, 0.0f, 1.0f))
+      pbr_ctx.clearcoat_override = cc_strength;
+    ImGui::SliderFloat("Coat Roughness", &pbr_ctx.clearcoat_roughness_override, 0.0f, 1.0f);
+  }
+
+  ImGui::Checkbox("Anisotropy", &pbr_ctx.enable_anisotropy);
+
+  // Global anisotropy override (non-glTF): force an elongated highlight onto
+  // every material to preview the effect on assets without the extension.
+  static bool ani_override = false;
+  static float ani_strength = 1.0f;
+  if (ImGui::Checkbox("Override Anisotropy", &ani_override))
+    pbr_ctx.anisotropy_override = ani_override ? ani_strength : -1.0f;
+  if (ani_override)
+  {
+    if (ImGui::SliderFloat("Aniso Strength", &ani_strength, 0.0f, 1.0f))
+      pbr_ctx.anisotropy_override = ani_strength;
+    ImGui::SliderFloat("Aniso Rotation", &pbr_ctx.anisotropy_rotation_override, 0.0f, 6.2831853f);
+  }
 
   // Material overrides (legacy single-draw path)
   ImGui::Separator();
