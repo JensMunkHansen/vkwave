@@ -19,6 +19,12 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     parser, "path", "Path to glTF model (.gltf/.glb)", {"model"});
   args::ValueFlag<std::string> hdr_flag(
     parser, "path", "Path to HDR environment map", {"hdr"});
+  args::ValueFlag<uint64_t> screenshot_frame(
+    parser, "N", "Auto-capture a PNG at frame N then keep running (use with --max-frames)", {"screenshot"});
+  args::ValueFlag<std::string> screenshot_out(
+    parser, "path", "Output path for --screenshot (default: timestamped name)", {"screenshot-out"});
+  args::ValueFlag<int> debug_mode(
+    parser, "N", "Force PBR debug view (0=Final 1=Normals 2=BaseColor 3=Metallic 4=Roughness 5=AO 6=Emissive 7=Clearcoat)", {"debug-mode"});
 
   try
   {
@@ -51,6 +57,12 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     config.model_path = args::get(model_flag);
   if (hdr_flag)
     config.hdr_path = args::get(hdr_flag);
+  if (screenshot_frame)
+    config.screenshot_frame = args::get(screenshot_frame);
+  if (screenshot_out)
+    config.screenshot_path = args::get(screenshot_out);
+  if (debug_mode)
+    config.debug_mode = args::get(debug_mode);
 
   return true;
 }
