@@ -51,10 +51,20 @@ jobs:
       # (lavapipe) so headless tests can at least attempt to run.
       - name: Install system dependencies
         run: |
+          # ubuntu-24.04's libvulkan-dev ships Vulkan-Hpp 1.3.275, which predates
+          # the move of the dispatch loaders into vk::detail (~SDK 1.3.295), so
+          # vk::detail::DispatchLoaderDynamic fails to compile. Use the LunarG SDK
+          # for a recent vulkan.hpp matching the local environment. glslang stays
+          # on the (working) ubuntu packages.
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/lunarg-vulkan.asc >/dev/null
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build pkg-config \
-            libvulkan-dev glslang-dev glslang-tools libglm-dev \
+            vulkan-sdk \
+            glslang-dev glslang-tools \
+            ninja-build pkg-config libglm-dev \
             xorg-dev libwayland-dev wayland-protocols libxkbcommon-dev \
             mesa-vulkan-drivers
 
