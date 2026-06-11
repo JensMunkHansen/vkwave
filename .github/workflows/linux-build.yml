@@ -1,16 +1,15 @@
 name: Build (Linux GCC)
 
-# Manual-only: no push or pull_request triggers. This is deliberate — the
-# workflow can be merged to main in any state (even half-finished) without ever
-# auto-running, so a heavy/failing build never fires on every commit. Trigger it
-# explicitly from the Actions tab ("Run workflow") and pick the branch to build.
-# Note: the "Run workflow" button only appears once this file exists on the
-# default branch (main); from there you may dispatch it against any branch.
+# Triggers: pull_request (build PRs to main, both Debug AND Release) + manual
+# workflow_dispatch (pick one config). Deliberately NO `push` trigger — we don't
+# want every branch/commit push to fire a heavy build; PRs and manual runs only.
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       build-type:
-        description: "Build configuration"
+        description: "Build configuration (manual runs only; PRs build both)"
         required: true
         default: Debug
         type: choice
@@ -75,13 +74,26 @@ jobs:
       - name: Configure (linux-gcc preset)
         run: cmake --preset linux-gcc -DVKWAVE_FETCH_ASSETS=OFF
 
-      - name: Build (${{ inputs.build-type }})
-        run: cmake --build build/linux-gcc --config ${{ inputs.build-type }}
+      # Configure is multi-config (Ninja Multi-Config), so one configure covers
+      # both. A pull_request builds BOTH Debug and Release; a manual dispatch
+      # builds only the chosen build-type. No matrix — just gated sequential steps.
+      - name: Build (Debug)
+        if: ${{ github.event_name == 'pull_request' || inputs.build-type == 'Debug' }}
+        run: cmake --build build/linux-gcc --config Debug
 
       # Best-effort: the runner has no GPU, only software Vulkan (lavapipe), so a
-      # test that demands a real device may fail. Keep it non-blocking until we
-      # know which tests run headlessly; the build above is the hard gate.
-      - name: Test (${{ inputs.build-type }})
-        if: ${{ inputs.run-tests }}
+      # test that demands a real device may fail. Non-blocking; the build is the
+      # hard gate. (On PRs inputs.run-tests is empty, so tests run by default.)
+      - name: Test (Debug)
+        if: ${{ (github.event_name == 'pull_request' || inputs.build-type == 'Debug') && inputs.run-tests != 'false' }}
         continue-on-error: true
-        run: ctest --test-dir build/linux-gcc -C ${{ inputs.build-type }} --output-on-failure
+        run: ctest --test-dir build/linux-gcc -C Debug --output-on-failure
+
+      - name: Build (Release)
+        if: ${{ github.event_name == 'pull_request' || inputs.build-type == 'Release' }}
+        run: cmake --build build/linux-gcc --config Release
+
+      - name: Test (Release)
+        if: ${{ (github.event_name == 'pull_request' || inputs.build-type == 'Release') && inputs.run-tests != 'false' }}
+        continue-on-error: true
+        run: ctest --test-dir build/linux-gcc -C Release --output-on-failure
