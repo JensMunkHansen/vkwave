@@ -1,6 +1,11 @@
 build/
+# 3rd-party assets fetched at configure time
 data/
+# private/local scan data — never committed
+localdata/
 .cache/
+# transient ImGui window layout state
+imgui.ini
 compile_commands.json
 *.swp
 *~
