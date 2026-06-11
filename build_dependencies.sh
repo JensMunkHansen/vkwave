@@ -149,7 +149,7 @@ check_existing_dependencies() {
             "imgui:lib/cmake/imgui/imguiConfig.cmake" \
             "cgltf:include/cgltf.h" \
             "stb:include/stb/stb_image.h" \
-            "toml11:share/cmake/toml11/toml11Config.cmake" \
+            "toml11:lib/cmake/toml11/toml11Config.cmake" \
             "SPIRV-Reflect:lib/cmake/spirv-reflect-static/spirv-reflect-staticConfig.cmake"; do
 
             local name="${dep_name%%:*}"
@@ -240,7 +240,7 @@ verify_installation() {
         "imgui:lib/cmake/imgui/imguiConfig.cmake" \
         "cgltf:include/cgltf.h" \
         "stb:include/stb/stb_image.h" \
-        "toml11:share/cmake/toml11/toml11Config.cmake" \
+        "toml11:lib/cmake/toml11/toml11Config.cmake" \
         "SPIRV-Reflect:lib/cmake/spirv-reflect-static/spirv-reflect-staticConfig.cmake"; do
 
         local name="${dep_name%%:*}"
