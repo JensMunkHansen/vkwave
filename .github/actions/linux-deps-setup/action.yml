@@ -7,19 +7,19 @@ description: >
 runs:
   using: composite
   steps:
-    # Cache ONLY the install tree, not the sources/build output. build_dependencies.sh
-    # deletes its build dir (clean_build_directory) so locally only .../install
-    # survives; the cloned repos and object files aren't needed at consume time and
-    # would just bloat the cache. The install dir is the self-contained thing the
-    # linux-gcc preset reads via CMAKE_PREFIX_PATH.
+    # Restore only. We deliberately do NOT use the combined actions/cache here:
+    # its post-step save only runs when the whole JOB succeeds (save-always was
+    # removed in v4), so a failure in a later step (Configure/Build) would throw
+    # away the freshly built deps and force a rebuild every iteration. Instead we
+    # save explicitly right after the build below.
     #
-    # The key is driven by the exact inputs that decide what gets built (versions.txt
-    # + the NativeDeps recipes + the build script), so a version bump invalidates it.
-    # The branch segment lets each branch keep its own entry while the `-main`
-    # restore-key lets any branch reuse main's prebuilt deps (see restore-keys order).
-    - name: Restore/save vkwavepkg install cache
+    # Cache ONLY the install tree (build_dependencies.sh deletes its build dir).
+    # Key on the exact inputs that decide what's built (versions.txt + NativeDeps
+    # recipes + build script); the branch segment keeps per-branch entries while
+    # the `-main` restore-key lets any branch reuse main's prebuilt deps.
+    - name: Restore vkwavepkg install cache
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: ~/vkwavepkg/linux/gcc/install
         key: vkwavepkg-gcc-${{ runner.os }}-${{ hashFiles('versions.txt', 'NativeDeps/**', 'build_dependencies.sh') }}-${{ github.head_ref || github.ref_name }}
@@ -27,11 +27,18 @@ runs:
           vkwavepkg-gcc-${{ runner.os }}-${{ hashFiles('versions.txt', 'NativeDeps/**', 'build_dependencies.sh') }}-main
           vkwavepkg-gcc-${{ runner.os }}-${{ hashFiles('versions.txt', 'NativeDeps/**', 'build_dependencies.sh') }}-
 
-    # On an exact cache hit this is skipped entirely. On a partial hit (e.g. a
-    # branch inheriting main's cache) it still runs, but build_dependencies.sh
-    # detects the already-installed deps and early-exits in seconds. Builds both
-    # Debug and Release (script default) so either app configuration can link.
     - name: Build dependencies (cache miss)
+      id: build_deps
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: bash ./build_dependencies.sh --compiler gcc
+
+    # Save immediately after a successful build, BEFORE any downstream step can
+    # fail. If build_deps itself failed, the composite action halts and this step
+    # never runs (no `always()`), so we never cache a partial/broken install.
+    - name: Save vkwavepkg install cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/vkwavepkg/linux/gcc/install
+        key: vkwavepkg-gcc-${{ runner.os }}-${{ hashFiles('versions.txt', 'NativeDeps/**', 'build_dependencies.sh') }}-${{ github.head_ref || github.ref_name }}
