@@ -22,6 +22,10 @@ layout(set = 1, binding = 1) uniform sampler2D normalTexture;
 layout(set = 1, binding = 2) uniform sampler2D metallicRoughnessTexture;  // G=roughness, B=metallic
 layout(set = 1, binding = 3) uniform sampler2D emissiveTexture;
 layout(set = 1, binding = 4) uniform sampler2D aoTexture;                 // R=AO
+layout(set = 1, binding = 5) uniform sampler2D clearcoatTexture;          // R=clearcoat strength
+layout(set = 1, binding = 6) uniform sampler2D clearcoatRoughnessTexture; // G=clearcoat roughness
+layout(set = 1, binding = 7) uniform sampler2D clearcoatNormalTexture;    // tangent-space coat normal
+layout(set = 1, binding = 8) uniform sampler2D anisotropyTexture;         // RG=direction, B=strength
 
 // Set 2: Per-scene globals (bound once per frame)
 layout(set = 2, binding = 0) uniform sampler2D brdfLUT;
@@ -38,6 +42,10 @@ layout(push_constant) uniform PushConstants {
   uint flags;
   uint alphaMode;
   float alphaCutoff;
+  float clearcoatFactor;          // KHR_materials_clearcoat strength
+  float clearcoatRoughnessFactor; // KHR_materials_clearcoat roughness
+  float anisotropyStrength;       // KHR_materials_anisotropy strength
+  float anisotropyRotation;       // KHR_materials_anisotropy rotation (radians)
 } pc;
 
 layout(location = 0) in vec3 fragColor;
@@ -95,6 +103,27 @@ float BRDF_specularGGX(float alphaRoughness, float NdotL, float NdotV, float Ndo
   return V * D;
 }
 
+// --- Anisotropy (KHR_materials_anisotropy): split roughness at/ab along T/B ---
+
+// Anisotropic GGX/Trowbridge-Reitz Normal Distribution Function
+float D_GGX_anisotropic(float NdotH, float TdotH, float BdotH, float at, float ab)
+{
+  float a2 = at * ab;
+  vec3 f = vec3(ab * TdotH, at * BdotH, a2 * NdotH);
+  float w2 = a2 / dot(f, f);
+  return a2 * w2 * w2 / PI;
+}
+
+// Anisotropic Smith Height-Correlated Visibility Function
+float V_GGX_anisotropic(float NdotL, float NdotV, float TdotV, float BdotV,
+                        float TdotL, float BdotL, float at, float ab)
+{
+  float GGXV = NdotL * length(vec3(at * TdotV, ab * BdotV, NdotV));
+  float GGXL = NdotV * length(vec3(at * TdotL, ab * BdotL, NdotL));
+  float v = 0.5 / (GGXV + GGXL);
+  return clamp(v, 0.0, 1.0);
+}
+
 // ============================================================================
 // IBL Functions
 // ============================================================================
@@ -112,6 +141,22 @@ vec3 getIBLRadianceGGX(vec3 N, vec3 V, float perceptualRoughness)
   const float MAX_REFLECTION_LOD = 4.0;
   float lod = perceptualRoughness * MAX_REFLECTION_LOD;
   return textureLod(prefilterMap, R, lod).rgb;
+}
+
+// Anisotropic specular radiance: bends the reflection vector toward the
+// anisotropy bitangent to stretch the environment highlight (KHR reference).
+vec3 getIBLRadianceAnisotropy(vec3 N, vec3 V, vec3 anisotropicB,
+                              float anisotropy, float perceptualRoughness)
+{
+  vec3 bentNormal = cross(anisotropicB, V);
+  bentNormal = normalize(cross(bentNormal, anisotropicB));
+  float a = pow(1.0 - anisotropy * (1.0 - perceptualRoughness), 4.0);
+  bentNormal = normalize(mix(bentNormal, N, a));
+
+  vec3 R = reflect(-V, bentNormal);
+  R = normalize(mix(R, bentNormal, perceptualRoughness * perceptualRoughness));
+  const float MAX_REFLECTION_LOD = 4.0;
+  return textureLod(prefilterMap, R, perceptualRoughness * MAX_REFLECTION_LOD).rgb;
 }
 
 // Roughness-dependent Fresnel with multi-scattering correction (Fdez-Aguera)
@@ -193,6 +238,19 @@ void main()
     return;
   }
 
+  if (pc.debugMode == 7) {
+    float cc = pc.clearcoatFactor * texture(clearcoatTexture, fragTexCoord).r;
+    outColor = vec4(vec3(cc), alpha);
+    return;
+  }
+
+  if (pc.debugMode == 8) {
+    float a = pc.anisotropyStrength;
+    if ((pc.flags & 32u) != 0u) a *= texture(anisotropyTexture, fragTexCoord).b;
+    outColor = vec4(vec3(a), alpha);
+    return;
+  }
+
   // ---- Full PBR path (debugMode == 0 or unknown) ----
 
   // Normal mapping (toggled by flags bit 0)
@@ -246,8 +304,41 @@ void main()
   // Fresnel
   vec3 F = F_Schlick(F0, F90, VdotH);
 
-  // Specular BRDF
-  float specularBRDF = BRDF_specularGGX(alphaRoughness, NdotL, NdotV, NdotH);
+  // Specular BRDF + specular IBL — isotropic by default, anisotropic when enabled.
+  float specularBRDF;
+  vec3 f_specular_ibl;
+  if ((pc.flags & 16u) != 0u && pc.anisotropyStrength > 0.0)
+  {
+    // Anisotropic direction in tangent space, rotated and optionally textured.
+    vec2 dirBase = vec2(cos(pc.anisotropyRotation), sin(pc.anisotropyRotation));
+    vec2 direction = dirBase;
+    float anisotropy = pc.anisotropyStrength;
+    if ((pc.flags & 32u) != 0u) {
+      vec3 aTex = texture(anisotropyTexture, fragTexCoord).rgb;
+      direction = aTex.rg * 2.0 - 1.0;
+      direction = mat2(dirBase.x, dirBase.y, -dirBase.y, dirBase.x) * normalize(direction);
+      anisotropy *= aTex.b;
+    }
+    vec3 aniT = normalize(fragTBN * vec3(direction, 0.0));
+    vec3 aniB = normalize(cross(N, aniT));
+
+    // Split roughness: stretch along the tangent (at), keep base along bitangent (ab)
+    float at = mix(alphaRoughness, 1.0, anisotropy * anisotropy);
+    float ab = alphaRoughness;
+
+    float TdotH = dot(aniT, H), BdotH = dot(aniB, H);
+    float TdotV = dot(aniT, V), BdotV = dot(aniB, V);
+    float TdotL = dot(aniT, L), BdotL = dot(aniB, L);
+
+    specularBRDF = D_GGX_anisotropic(NdotH, TdotH, BdotH, at, ab)
+                 * V_GGX_anisotropic(NdotL, NdotV, TdotV, BdotV, TdotL, BdotL, at, ab);
+    f_specular_ibl = getIBLRadianceAnisotropy(N, V, aniB, anisotropy, perceptualRoughness);
+  }
+  else
+  {
+    specularBRDF = BRDF_specularGGX(alphaRoughness, NdotL, NdotV, NdotH);
+    f_specular_ibl = getIBLRadianceGGX(N, V, perceptualRoughness);
+  }
 
   // Diffuse BRDF
   vec3 diffuseBRDF = BRDF_lambertian(albedo);
@@ -260,9 +351,8 @@ void main()
   // Direct lighting
   vec3 Lo = brdf * radiance * NdotL;
 
-  // IBL ambient lighting
+  // IBL ambient lighting (f_specular_ibl computed above, iso or aniso)
   vec3 f_diffuse_ibl = getIBLDiffuseLight(N) * albedo;
-  vec3 f_specular_ibl = getIBLRadianceGGX(N, V, perceptualRoughness);
 
   // Metal IBL: specular only with F0 = baseColor
   vec3 f_metal_fresnel = getIBLGGXFresnel(N, V, perceptualRoughness, albedo, 1.0);
@@ -283,6 +373,49 @@ void main()
   // Add emissive (toggled by flags bit 1)
   if ((pc.flags & 2u) != 0u)
     color += texture(emissiveTexture, fragTexCoord).rgb;
+
+  // ---- Clear coat (KHR_materials_clearcoat, flags bit 2) ----
+  // A thin dielectric film (IOR 1.5, F0 = 0.04) layered over the base material.
+  // Follows the glTF Sample Viewer layering: the base is attenuated by the coat's
+  // reflectance, then the coat's own specular lobe is added on top.
+  if ((pc.flags & 4u) != 0u && pc.clearcoatFactor > 0.0)
+  {
+    float cc = pc.clearcoatFactor * texture(clearcoatTexture, fragTexCoord).r;
+    float ccPerceptualRough = clamp(
+      pc.clearcoatRoughnessFactor * texture(clearcoatRoughnessTexture, fragTexCoord).g,
+      0.0, 1.0);
+    float ccAlpha = ccPerceptualRough * ccPerceptualRough;
+
+    // Coat normal: dedicated map if present (flags bit 3), else the geometric
+    // normal — the smooth coat does NOT inherit the base material's normal map.
+    vec3 ccN;
+    if ((pc.flags & 8u) != 0u) {
+      vec3 nm = texture(clearcoatNormalTexture, fragTexCoord).rgb * 2.0 - 1.0;
+      ccN = normalize(fragTBN * nm);
+    } else {
+      ccN = normalize(fragNormal);
+    }
+
+    float ccNdotL = clamp(dot(ccN, L), 0.0, 1.0);
+    float ccNdotV = clamp(dot(ccN, V), 0.0, 1.0);
+    float ccNdotH = clamp(dot(ccN, H), 0.0, 1.0);
+
+    const vec3 ccF0 = vec3(0.04);
+
+    // Direct coat specular (Fresnel included, like the base specular lobe)
+    float ccSpec = BRDF_specularGGX(ccAlpha, ccNdotL, ccNdotV, ccNdotH);
+    vec3 ccLo = vec3(ccSpec) * F_Schlick(ccF0, F90, VdotH) * radiance * ccNdotL;
+
+    // Indirect (IBL) coat specular, occluded by AO
+    vec3 ccIBL = getIBLRadianceGGX(ccN, V, ccPerceptualRough) * ao
+               * getIBLGGXFresnel(ccN, V, ccPerceptualRough, ccF0, 1.0);
+
+    vec3 f_clearcoat = (ccLo + ccIBL) * cc;
+
+    // Coat Fresnel at the viewing angle drives how much base shows through
+    float Fc = F_Schlick(ccF0, F90, ccNdotV).x;
+    color = color * (1.0 - cc * Fc) + f_clearcoat;
+  }
 
   outColor = vec4(color, alpha);
 }

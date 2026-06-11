@@ -35,6 +35,9 @@ struct AppConfig
 
   // [debug]
   uint64_t max_frames{ 0 };      // 0 = unlimited, >0 = exit after N frames
+  uint64_t screenshot_frame{ 0 }; // 0 = disabled, >0 = auto-capture at frame N (headless verification)
+  std::string screenshot_path;    // output PNG path for the auto-capture (empty = timestamped name)
+  int debug_mode{ -1 };           // -1 = GUI-controlled; >=0 forces PBR debug view (0=Final..7=Clearcoat)
   bool shader_debug{ false };     // emit NonSemantic debug info (real variable names in RenderDoc)
   bool shader_optimize{ false };  // enable SPIR-V optimizer
   std::string log_level;          // "trace", "debug", "info", "warn", "error" (empty = build default)

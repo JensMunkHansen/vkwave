@@ -158,6 +158,10 @@ int main(int argc, char** argv)
   int tm = app.config.default_tonemap_index;
   scene.composite_pass.tonemap_mode = (tm >= 0 && tm <= kMaxTonemapIndex) ? tm : 0;
 
+  // Optional headless override of the PBR debug visualization (-1 = GUI-controlled)
+  if (app.config.debug_mode >= 0)
+    scene.pbr_ctx.debug_mode = app.config.debug_mode;
+
   // Fit camera to loaded model bounds
   if (scene.data.gltf_scene.bounds.valid())
   {
@@ -196,6 +200,14 @@ int main(int argc, char** argv)
     scene.update(*app.graph);
     scene.draw_ui(app, avg_fps);
 
+    // Headless auto-capture: trigger a screenshot at the configured frame.
+    if (app.config.screenshot_frame != 0 &&
+        app.graph->cpu_frame() == app.config.screenshot_frame &&
+        !scene.screenshot_requested && !scene.screenshot_in_flight && !scene.screenshot_compressing)
+    {
+      scene.screenshot_requested = true;
+    }
+
     // Grow readback buffer if needed (before render_frame so it's ready for post_record_fn)
     if (scene.screenshot_requested && !scene.screenshot_in_flight && !scene.screenshot_compressing)
     {
@@ -227,10 +239,17 @@ int main(int argc, char** argv)
         scene.screenshot_in_flight = false;
         scene.screenshot_compressing = true;
 
-        auto now = std::chrono::system_clock::now();
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-          now.time_since_epoch()).count();
-        scene.screenshot_filename = fmt::format("screenshot_{}.png", ms);
+        if (!app.config.screenshot_path.empty())
+        {
+          scene.screenshot_filename = app.config.screenshot_path;
+        }
+        else
+        {
+          auto now = std::chrono::system_clock::now();
+          auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+          scene.screenshot_filename = fmt::format("screenshot_{}.png", ms);
+        }
 
         auto* readback = scene.screenshot_readback.get();
         auto format = scene.screenshot_format;

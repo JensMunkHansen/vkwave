@@ -1065,6 +1065,32 @@ void traverse_nodes(
             scene_mat.iridescenceThicknessMax = irid.iridescence_thickness_max;
           }
 
+          // KHR_materials_clearcoat
+          if (primitive.material->has_clearcoat)
+          {
+            const auto& cc = primitive.material->clearcoat;
+            scene_mat.clearcoatFactor = cc.clearcoat_factor;
+            scene_mat.clearcoatRoughnessFactor = cc.clearcoat_roughness_factor;
+            scene_mat.clearcoatTexture = extract_texture(
+              cc.clearcoat_texture, device, base_path, "clearcoat", true);
+            scene_mat.clearcoatRoughnessTexture = extract_texture(
+              cc.clearcoat_roughness_texture, device, base_path, "clearcoatRoughness", true);
+            scene_mat.clearcoatNormalTexture = extract_texture(
+              cc.clearcoat_normal_texture, device, base_path, "clearcoatNormal", true);
+            scene_mat.hasClearcoatNormal = (scene_mat.clearcoatNormalTexture != nullptr);
+          }
+
+          // KHR_materials_anisotropy
+          if (primitive.material->has_anisotropy)
+          {
+            const auto& aniso = primitive.material->anisotropy;
+            scene_mat.anisotropyStrength = aniso.anisotropy_strength;
+            scene_mat.anisotropyRotation = aniso.anisotropy_rotation;
+            scene_mat.anisotropyTexture = extract_texture(
+              aniso.anisotropy_texture, device, base_path, "anisotropy", true);
+            scene_mat.hasAnisotropyTexture = (scene_mat.anisotropyTexture != nullptr);
+          }
+
           // KHR_materials_transmission
           if (primitive.material->has_transmission)
           {

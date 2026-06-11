@@ -174,11 +174,19 @@ void ScenePipeline::write_pbr_descriptors(SceneData& data)
   // Set 1: per-material textures (one descriptor set per material)
   for (uint32_t m = 0; m < mat_count; ++m)
   {
+    // Empty handle used as the "no texture" source for single-material models,
+    // which have no clearcoat slots — tex_or() falls back appropriately.
+    static const std::unique_ptr<vkwave::Texture> none;
+
     auto& mat_base  = use_scene ? data.gltf_scene.materials[m].baseColorTexture         : data.gltf_model.baseColorTexture;
     auto& mat_norm  = use_scene ? data.gltf_scene.materials[m].normalTexture            : data.gltf_model.normalTexture;
     auto& mat_mr    = use_scene ? data.gltf_scene.materials[m].metallicRoughnessTexture : data.gltf_model.metallicRoughnessTexture;
     auto& mat_emis  = use_scene ? data.gltf_scene.materials[m].emissiveTexture          : data.gltf_model.emissiveTexture;
     auto& mat_ao    = use_scene ? data.gltf_scene.materials[m].aoTexture                : data.gltf_model.aoTexture;
+    auto& mat_cc    = use_scene ? data.gltf_scene.materials[m].clearcoatTexture          : none;
+    auto& mat_ccr   = use_scene ? data.gltf_scene.materials[m].clearcoatRoughnessTexture : none;
+    auto& mat_ccn   = use_scene ? data.gltf_scene.materials[m].clearcoatNormalTexture    : none;
+    auto& mat_ani   = use_scene ? data.gltf_scene.materials[m].anisotropyTexture          : none;
 
     auto& base = tex_or(mat_base, data.fallback_white);
     group.write_image_descriptor(1, "baseColorTexture", m, base.image_view(), base.sampler());
@@ -194,6 +202,20 @@ void ScenePipeline::write_pbr_descriptors(SceneData& data)
 
     auto& ao = tex_or(mat_ao, data.fallback_white);
     group.write_image_descriptor(1, "aoTexture", m, ao.image_view(), ao.sampler());
+
+    // Clear coat: white fallback => texture multiplier of 1.0 (factor-only path).
+    auto& cc = tex_or(mat_cc, data.fallback_white);
+    group.write_image_descriptor(1, "clearcoatTexture", m, cc.image_view(), cc.sampler());
+
+    auto& ccr = tex_or(mat_ccr, data.fallback_white);
+    group.write_image_descriptor(1, "clearcoatRoughnessTexture", m, ccr.image_view(), ccr.sampler());
+
+    auto& ccn = tex_or(mat_ccn, data.fallback_normal);
+    group.write_image_descriptor(1, "clearcoatNormalTexture", m, ccn.image_view(), ccn.sampler());
+
+    // Anisotropy: gated by the AnisotropyMap flag, so fallback content is unused.
+    auto& ani = tex_or(mat_ani, data.fallback_white);
+    group.write_image_descriptor(1, "anisotropyTexture", m, ani.image_view(), ani.sampler());
   }
 
   // Set 2: per-scene IBL textures (single descriptor set)
