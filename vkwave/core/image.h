@@ -25,9 +25,12 @@ public:
   /// @param name    Debug name.
   /// @param samples MSAA sample count (default e1). When multisample,
   ///                eTransientAttachment is added automatically.
+  /// @param mip_levels Number of mip levels (default 1). Must be 1 for
+  ///                multisample images. The created view spans all levels.
   Image(const Device& device, vk::Format format, vk::Extent2D extent,
     vk::ImageUsageFlags usage, const std::string& name,
-    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1);
+    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1,
+    uint32_t mip_levels = 1);
 
   ~Image();
 
@@ -40,6 +43,7 @@ public:
   [[nodiscard]] vk::ImageView image_view() const { return m_view; }
   [[nodiscard]] vk::Format format() const { return m_format; }
   [[nodiscard]] vk::Extent2D extent() const { return m_extent; }
+  [[nodiscard]] uint32_t mip_levels() const { return m_mip_levels; }
 
 private:
   void destroy();
@@ -50,6 +54,7 @@ private:
   vk::ImageView m_view{ VK_NULL_HANDLE };
   vk::Format m_format{};
   vk::Extent2D m_extent{};
+  uint32_t m_mip_levels{ 1 };
 };
 
 } // namespace vkwave
