@@ -7,6 +7,7 @@
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cassert>
 #include <unordered_map>
 
@@ -89,7 +90,14 @@ ExecutionGroup& RenderGraph::set_present_group(
 
 uint32_t RenderGraph::offscreen_depth() const
 {
-  return m_offscreen_depth > 0 ? m_offscreen_depth : m_swapchain_image_count;
+  // The offscreen ring depth (per-slot copies of HDR/depth/MSAA-scratch/etc.) is
+  // capped well below the swapchain image count: one graphics queue means >4
+  // frames in flight buys no real overlap, only multiplies VRAM — e.g. 8 copies
+  // of 8x MSAA scratch at fullscreen OOMs. Override with --frames-in-flight.
+  constexpr uint32_t kDefaultMaxInFlight = 4;
+  return m_offscreen_depth > 0
+    ? m_offscreen_depth
+    : std::min(m_swapchain_image_count, kDefaultMaxInFlight);
 }
 
 void RenderGraph::build(const Swapchain& swapchain)
