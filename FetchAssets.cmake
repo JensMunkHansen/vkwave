@@ -51,6 +51,20 @@ function(fetch_gltf_model_glb name)
 endfunction()
 
 # ---------------------------------------------------------------------------
+# Download a multi-file (non-binary) glTF model: Models/<name>/glTF/<file>...
+# Some assets (e.g. FlightHelmet) ship only as separate .gltf + .bin + textures,
+# with no glTF-Binary/.glb variant. Pass every file in the glTF/ folder.
+# ---------------------------------------------------------------------------
+function(fetch_gltf_model_multifile name)
+  foreach(_file IN LISTS ARGN)
+    _download_asset(
+      "${_GLTF_ASSETS_BASE}/${name}/glTF/${_file}"
+      "${_DATA_DIR}/${name}/glTF/${_file}"
+    )
+  endforeach()
+endfunction()
+
+# ---------------------------------------------------------------------------
 # Download an HDR environment map
 # ---------------------------------------------------------------------------
 function(fetch_hdr_environment name)
@@ -74,11 +88,34 @@ set(_GLB_MODELS
   ClearCoatCarPaint  # car-paint clearcoat demo
   CompareAnisotropy  # KHR_materials_anisotropy A/B (with vs without)
   AnisotropyDiscTest # KHR_materials_anisotropy texture-driven direction
+  CarConcept         # multi-extension concept car (clearcoat, anisotropy, etc.)
 )
 
 foreach(_model IN LISTS _GLB_MODELS)
   fetch_gltf_model_glb(${_model})
 endforeach()
+
+# Multi-file glTF models (no glTF-Binary/.glb variant in the repo).
+# FlightHelmet ships as a .gltf manifest + .bin geometry + per-material PNGs.
+fetch_gltf_model_multifile(FlightHelmet
+  FlightHelmet.gltf
+  FlightHelmet.bin
+  FlightHelmet_Materials_GlassPlasticMat_BaseColor.png
+  FlightHelmet_Materials_GlassPlasticMat_Normal.png
+  FlightHelmet_Materials_GlassPlasticMat_OcclusionRoughMetal.png
+  FlightHelmet_Materials_LeatherPartsMat_BaseColor.png
+  FlightHelmet_Materials_LeatherPartsMat_Normal.png
+  FlightHelmet_Materials_LeatherPartsMat_OcclusionRoughMetal.png
+  FlightHelmet_Materials_LensesMat_BaseColor.png
+  FlightHelmet_Materials_LensesMat_Normal.png
+  FlightHelmet_Materials_LensesMat_OcclusionRoughMetal.png
+  FlightHelmet_Materials_MetalPartsMat_BaseColor.png
+  FlightHelmet_Materials_MetalPartsMat_Normal.png
+  FlightHelmet_Materials_MetalPartsMat_OcclusionRoughMetal.png
+  FlightHelmet_Materials_RubberWoodMat_BaseColor.png
+  FlightHelmet_Materials_RubberWoodMat_Normal.png
+  FlightHelmet_Materials_RubberWoodMat_OcclusionRoughMetal.png
+)
 
 # HDR environments (Khronos glTF-Sample-Environments)
 set(_HDR_ENVIRONMENTS

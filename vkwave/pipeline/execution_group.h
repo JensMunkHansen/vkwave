@@ -154,6 +154,18 @@ public:
                               vk::ImageView view, vk::Sampler sampler,
                               vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal);
 
+  /// Write a buffer (UBO/SSBO) to all allocations of a set, by binding index.
+  /// For manually-managed buffers (e.g. the immutable per-material SSBO) that
+  /// are not ring-buffered through the auto-buffer machinery.
+  void write_buffer_descriptor(uint32_t set, uint32_t binding,
+                               vk::Buffer buffer, vk::DeviceSize size,
+                               vk::DescriptorType type = vk::DescriptorType::eStorageBuffer);
+
+  /// Write a buffer (UBO/SSBO) to all allocations of a set, by GLSL name.
+  void write_buffer_descriptor(uint32_t set, const std::string& name,
+                               vk::Buffer buffer, vk::DeviceSize size,
+                               vk::DescriptorType type = vk::DescriptorType::eStorageBuffer);
+
   /// Get the UBO/SSBO buffer for a given (set, binding) at the current slot.
   /// Valid inside the record callback after begin_frame().
   Buffer& ubo(uint32_t set, uint32_t binding);

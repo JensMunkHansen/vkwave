@@ -43,6 +43,12 @@ struct PBRContext
   bool enable_clearcoat{ true };
   bool enable_anisotropy{ true };
 
+  // Optional global metallic/roughness preview overrides. When >= 0, the value
+  // replaces every material's authored factor (e.g. to tweak the single-material
+  // cube). When < 0 (default), materials use their authored SSBO values.
+  float metallic_override{ -1.0f };
+  float roughness_override{ -1.0f };
+
   // Optional global clear-coat override (non-glTF authoring convenience).
   // When >= 0, replaces each material's clearcoatFactor so coat can be
   // previewed on assets that don't author KHR_materials_clearcoat.
@@ -73,11 +79,10 @@ struct PBRPass : Pass<PBRPass>
 {
   const PBRContext* ctx{ nullptr };
 
-  // Legacy single-draw fallback state (no primitives path)
+  // Legacy single-draw fallback state (no primitives path). Material constants
+  // for this path come from GpuMaterial index 0 in the SSBO; only the model
+  // transform is held here.
   glm::mat4 model{ 1.0f };
-  glm::vec4 base_color_factor{ 1.0f };
-  float metallic_factor{ 1.0f };
-  float roughness_factor{ 1.0f };
 
   /// Returns the PipelineSpec for this pass (shader paths, vertex layout, etc.).
   static PipelineSpec pipeline_spec();

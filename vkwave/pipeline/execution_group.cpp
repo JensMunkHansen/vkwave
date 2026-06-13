@@ -57,12 +57,16 @@ ExecutionGroup::ExecutionGroup(
   // Store reflected descriptor set info for auto-creating UBOs later
   m_reflected_sets = reflection.descriptor_set_infos();
 
-  // Register buffer specs for each binding with blockSize > 0 (UBO/SSBO)
+  // Register buffer specs for each UBO binding with blockSize > 0.
+  // Storage buffers are intentionally excluded: they are managed manually
+  // (single immutable instance, written via write_buffer_descriptor) rather
+  // than ring-buffered per slot. Auto-buffers also assume the set's descriptor
+  // count equals the ring depth, which doesn't hold for singleton SSBO sets.
   for (auto& set_info : m_reflected_sets)
   {
     for (auto& b : set_info.bindings)
     {
-      if (b.blockSize > 0)
+      if (b.blockSize > 0 && b.type != vk::DescriptorType::eStorageBuffer)
       {
         BufferHandle handle = m_buffer_specs.size();
         m_buffer_specs.push_back({
@@ -431,6 +435,35 @@ uint32_t ExecutionGroup::binding_index(uint32_t set, const std::string& name) co
   }
   throw std::runtime_error(
     "Descriptor binding '" + name + "' not found in set " + std::to_string(set));
+}
+
+void ExecutionGroup::write_buffer_descriptor(
+  uint32_t set, uint32_t binding, vk::Buffer buf, vk::DeviceSize size,
+  vk::DescriptorType type)
+{
+  assert(set < m_descriptor_sets.size() && "set index out of range");
+
+  for (size_t i = 0; i < m_descriptor_sets[set].size(); ++i)
+  {
+    vk::DescriptorBufferInfo buffer_info{ buf, 0, size };
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = m_descriptor_sets[set][i];
+    write.dstBinding = binding;
+    write.dstArrayElement = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = type;
+    write.pBufferInfo = &buffer_info;
+
+    m_device.device().updateDescriptorSets(write, {});
+  }
+}
+
+void ExecutionGroup::write_buffer_descriptor(
+  uint32_t set, const std::string& name, vk::Buffer buf, vk::DeviceSize size,
+  vk::DescriptorType type)
+{
+  write_buffer_descriptor(set, binding_index(set, name), buf, size, type);
 }
 
 void ExecutionGroup::write_image_descriptor(

@@ -32,20 +32,44 @@ layout(set = 2, binding = 0) uniform sampler2D brdfLUT;
 layout(set = 2, binding = 1) uniform samplerCube irradianceMap;
 layout(set = 2, binding = 2) uniform samplerCube prefilterMap;
 
-layout(push_constant) uniform PushConstants {
-  mat4 model;
+// Per-material constants — single immutable SSBO shared across all frames
+// (material data never changes after load). Indexed by pc.materialIndex.
+// Layout must match vkwave::GpuMaterial (std430).
+struct GpuMaterial {
   vec4 baseColorFactor;
   float metallicFactor;
   float roughnessFactor;
-  float time;
-  int debugMode;
-  uint flags;
-  uint alphaMode;
+  float clearcoatFactor;
+  float clearcoatRoughnessFactor;
+  float anisotropyStrength;
+  float anisotropyRotation;
   float alphaCutoff;
-  float clearcoatFactor;          // KHR_materials_clearcoat strength
-  float clearcoatRoughnessFactor; // KHR_materials_clearcoat roughness
-  float anisotropyStrength;       // KHR_materials_anisotropy strength
-  float anisotropyRotation;       // KHR_materials_anisotropy rotation (radians)
+  uint alphaMode;
+  uint materialFlags;
+  uint uvSets;     // bit b => texture at binding b samples fragTexCoord1
+  float normalScale; // glTF normalTexture.scale
+  uint _pad2;
+  vec4 texXform[18]; // KHR_texture_transform: per slot [2s]=mat2, [2s+1].xy=offset
+};
+layout(set = 2, binding = 3, std430) readonly buffer MaterialBuffer {
+  GpuMaterial materials[];
+} matbuf;
+
+// Push constant — must match PbrPushConstants (C++) and pbr.vert exactly.
+// Per-material data lives in the SSBO; the *Override floats are global UI
+// previews (< 0 means "use the material's authored value").
+layout(push_constant) uniform PushConstants {
+  mat4 model;
+  uint materialIndex;
+  uint globalFlags;
+  int debugMode;
+  float time;
+  float metallicOverride;
+  float roughnessOverride;
+  float clearcoatOverride;
+  float clearcoatRoughnessOverride;
+  float anisotropyOverride;
+  float anisotropyRotationOverride;
 } pc;
 
 layout(location = 0) in vec3 fragColor;
@@ -53,6 +77,7 @@ layout(location = 1) in vec3 fragNormal;
 layout(location = 2) in vec3 fragPos;
 layout(location = 3) in vec2 fragTexCoord;
 layout(location = 4) in mat3 fragTBN;
+layout(location = 7) in vec2 fragTexCoord1;
 
 layout(location = 0) out vec4 outColor;
 
@@ -88,7 +113,15 @@ float V_GGX(float NdotL, float NdotV, float alphaRoughness)
   float GGX = GGXV + GGXL;
   return GGX > 0.0 ? 0.5 / GGX : 0.0;
 }
-
+#if 0
+float V_SmithGGXCorrelatedFaste(float NdotL, float NdotV, float alphaRoughness)
+{
+    float a = alphaRoughness;
+    float GGXV = NdotL * (NdotV * (1.0 - a) + a);
+    float GGXL = NdotV * (NdotL * (1.0 - a) + a);
+    return 0.5 / (GGXV + GGXL);
+}
+#endif
 // Lambertian diffuse BRDF
 vec3 BRDF_lambertian(vec3 diffuseColor)
 {
@@ -183,22 +216,70 @@ vec3 getIBLGGXFresnel(vec3 N, vec3 V, float roughness, vec3 F0, float specularWe
 // Main
 // ============================================================================
 
+// TODO: Consider adding the Disney diffuse
+//       Kulla17 energy conservation
+//       4.8.8.2 dielectrics
+//       Askikmin (without Fresnel) + Sheen color
 void main()
 {
+  // Fetch this draw's material and resolve effective values. A global UI
+  // override (>= 0) replaces the authored value; otherwise the material's
+  // own value is used. `flags` merges the global UI toggles with the
+  // material's authored capability bits so the `(flags & BIT)` tests below
+  // are unchanged from the push-constant-only version.
+  GpuMaterial m = matbuf.materials[pc.materialIndex];
+  uint flags = pc.globalFlags | m.materialFlags;
+
+  // Per-texture UV addressing: pick the UV set (KHR multi-UV) then apply that
+  // slot's KHR_texture_transform (precomputed affine: mat2 + offset).
+  #define UVSEL(slot) (((m.uvSets & (1u << (slot))) != 0u) ? fragTexCoord1 : fragTexCoord)
+  #define XF(slot, uv) (mat2(m.texXform[2*(slot)].x, m.texXform[2*(slot)].y, \
+                             m.texXform[2*(slot)].z, m.texXform[2*(slot)].w) * (uv) \
+                        + m.texXform[2*(slot)+1].xy)
+  #define UV(slot) XF(slot, UVSEL(slot))
+  vec2 uvBase = UV(0);
+  vec2 uvNorm = UV(1);
+  vec2 uvMR   = UV(2);
+  vec2 uvEmis = UV(3);
+  vec2 uvAO   = UV(4);
+  vec2 uvCC   = UV(5);
+  vec2 uvCCR  = UV(6);
+  vec2 uvCCN  = UV(7);
+  vec2 uvAni  = UV(8);
+  #undef UV
+  #undef XF
+  #undef UVSEL
+
+  vec4  baseColorFactor = m.baseColorFactor;
+  float metallicFactor  = (pc.metallicOverride  >= 0.0) ? pc.metallicOverride  : m.metallicFactor;
+  float roughnessFactor = (pc.roughnessOverride >= 0.0) ? pc.roughnessOverride : m.roughnessFactor;
+
+  bool  ccOverridden = pc.clearcoatOverride >= 0.0;
+  float clearcoatFactor          = ccOverridden ? pc.clearcoatOverride          : m.clearcoatFactor;
+  float clearcoatRoughnessFactor = ccOverridden ? pc.clearcoatRoughnessOverride : m.clearcoatRoughnessFactor;
+
+  bool  aniOverridden = pc.anisotropyOverride >= 0.0;
+  float anisotropyStrength = aniOverridden ? pc.anisotropyOverride         : m.anisotropyStrength;
+  float anisotropyRotation = aniOverridden ? pc.anisotropyRotationOverride : m.anisotropyRotation;
+
+  uint  alphaMode   = m.alphaMode;
+  float alphaCutoff = m.alphaCutoff;
+
   // Alpha (needed by all paths for alpha test / blend)
-  vec4 texColor = texture(baseColorTexture, fragTexCoord);
-  vec4 baseColor = texColor * pc.baseColorFactor;
+  vec4 texColor = texture(baseColorTexture, uvBase);
+  vec4 baseColor = texColor * baseColorFactor;
   float alpha = baseColor.a;
-  if (pc.alphaMode == 0u) alpha = 1.0;                       // opaque
-  if (pc.alphaMode == 1u && alpha < pc.alphaCutoff) discard;  // mask
+  if (alphaMode == 0u) alpha = 1.0;                       // opaque
+  if (alphaMode == 1u && alpha < alphaCutoff) discard;  // mask
 
   // ---- Debug early-outs (skip BRDF/IBL when only visualizing a channel) ----
 
   if (pc.debugMode == 1) {
     // Normals
     vec3 N;
-    if ((pc.flags & 1u) != 0u) {
-      vec3 nm = texture(normalTexture, fragTexCoord).rgb * 2.0 - 1.0;
+    if ((flags & 1u) != 0u) {
+      vec3 nm = texture(normalTexture, uvNorm).rgb * 2.0 - 1.0;
+      nm.xy *= m.normalScale;
       N = normalize(fragTBN * nm);
     } else {
       N = normalize(fragNormal);
@@ -210,43 +291,43 @@ void main()
   if (pc.debugMode == 2) {
     vec3 albedo = baseColor.rgb;
     if (texColor.r > 0.99 && texColor.g > 0.99 && texColor.b > 0.99 &&
-        pc.baseColorFactor.r > 0.99 && pc.baseColorFactor.g > 0.99 && pc.baseColorFactor.b > 0.99)
+        baseColorFactor.r > 0.99 && baseColorFactor.g > 0.99 && baseColorFactor.b > 0.99)
       albedo = fragColor;
     outColor = vec4(albedo, alpha);
     return;
   }
 
   if (pc.debugMode == 3) {
-    float metallic = clamp(texture(metallicRoughnessTexture, fragTexCoord).b * pc.metallicFactor, 0.0, 1.0);
+    float metallic = clamp(texture(metallicRoughnessTexture, uvMR).b * metallicFactor, 0.0, 1.0);
     outColor = vec4(vec3(metallic), alpha);
     return;
   }
 
   if (pc.debugMode == 4) {
-    float roughness = clamp(texture(metallicRoughnessTexture, fragTexCoord).g * pc.roughnessFactor, 0.0, 1.0);
+    float roughness = clamp(texture(metallicRoughnessTexture, uvMR).g * roughnessFactor, 0.0, 1.0);
     outColor = vec4(vec3(roughness), alpha);
     return;
   }
 
   if (pc.debugMode == 5) {
-    outColor = vec4(vec3(texture(aoTexture, fragTexCoord).r), alpha);
+    outColor = vec4(vec3(texture(aoTexture, uvAO).r), alpha);
     return;
   }
 
   if (pc.debugMode == 6) {
-    outColor = vec4(texture(emissiveTexture, fragTexCoord).rgb, alpha);
+    outColor = vec4(texture(emissiveTexture, uvEmis).rgb, alpha);
     return;
   }
 
   if (pc.debugMode == 7) {
-    float cc = pc.clearcoatFactor * texture(clearcoatTexture, fragTexCoord).r;
+    float cc = clearcoatFactor * texture(clearcoatTexture, uvCC).r;
     outColor = vec4(vec3(cc), alpha);
     return;
   }
 
   if (pc.debugMode == 8) {
-    float a = pc.anisotropyStrength;
-    if ((pc.flags & 32u) != 0u) a *= texture(anisotropyTexture, fragTexCoord).b;
+    float a = anisotropyStrength;
+    if ((flags & 32u) != 0u) a *= texture(anisotropyTexture, uvAni).b;
     outColor = vec4(vec3(a), alpha);
     return;
   }
@@ -255,8 +336,9 @@ void main()
 
   // Normal mapping (toggled by flags bit 0)
   vec3 N;
-  if ((pc.flags & 1u) != 0u) {
-    vec3 nm = texture(normalTexture, fragTexCoord).rgb * 2.0 - 1.0;
+  if ((flags & 1u) != 0u) {
+    vec3 nm = texture(normalTexture, uvNorm).rgb * 2.0 - 1.0;
+    nm.xy *= m.normalScale;
     N = normalize(fragTBN * nm);
   } else {
     N = normalize(fragNormal);
@@ -266,17 +348,17 @@ void main()
 
   // Use vertex color when texture + factor are both default white
   if (texColor.r > 0.99 && texColor.g > 0.99 && texColor.b > 0.99 &&
-      pc.baseColorFactor.r > 0.99 && pc.baseColorFactor.g > 0.99 && pc.baseColorFactor.b > 0.99) {
+      baseColorFactor.r > 0.99 && baseColorFactor.g > 0.99 && baseColorFactor.b > 0.99) {
     albedo = fragColor;
   }
 
   // Metallic/roughness (glTF: G=roughness, B=metallic)
-  vec4 mrSample = texture(metallicRoughnessTexture, fragTexCoord);
-  float perceptualRoughness = clamp(mrSample.g * pc.roughnessFactor, 0.0, 1.0);
-  float metallic = clamp(mrSample.b * pc.metallicFactor, 0.0, 1.0);
+  vec4 mrSample = texture(metallicRoughnessTexture, uvMR);
+  float perceptualRoughness = clamp(mrSample.g * roughnessFactor, 0.0, 1.0);
+  float metallic = clamp(mrSample.b * metallicFactor, 0.0, 1.0);
 
   // AO (R channel)
-  float ao = texture(aoTexture, fragTexCoord).r;
+  float ao = texture(aoTexture, uvAO).r;
 
   // Alpha roughness (squared per glTF spec)
   float alphaRoughness = perceptualRoughness * perceptualRoughness;
@@ -307,14 +389,14 @@ void main()
   // Specular BRDF + specular IBL — isotropic by default, anisotropic when enabled.
   float specularBRDF;
   vec3 f_specular_ibl;
-  if ((pc.flags & 16u) != 0u && pc.anisotropyStrength > 0.0)
+  if ((flags & 16u) != 0u && anisotropyStrength > 0.0)
   {
     // Anisotropic direction in tangent space, rotated and optionally textured.
-    vec2 dirBase = vec2(cos(pc.anisotropyRotation), sin(pc.anisotropyRotation));
+    vec2 dirBase = vec2(cos(anisotropyRotation), sin(anisotropyRotation));
     vec2 direction = dirBase;
-    float anisotropy = pc.anisotropyStrength;
-    if ((pc.flags & 32u) != 0u) {
-      vec3 aTex = texture(anisotropyTexture, fragTexCoord).rgb;
+    float anisotropy = anisotropyStrength;
+    if ((flags & 32u) != 0u) {
+      vec3 aTex = texture(anisotropyTexture, uvAni).rgb;
       direction = aTex.rg * 2.0 - 1.0;
       direction = mat2(dirBase.x, dirBase.y, -dirBase.y, dirBase.x) * normalize(direction);
       anisotropy *= aTex.b;
@@ -371,26 +453,26 @@ void main()
   color *= ao;
 
   // Add emissive (toggled by flags bit 1)
-  if ((pc.flags & 2u) != 0u)
-    color += texture(emissiveTexture, fragTexCoord).rgb;
+  if ((flags & 2u) != 0u)
+    color += texture(emissiveTexture, uvEmis).rgb;
 
   // ---- Clear coat (KHR_materials_clearcoat, flags bit 2) ----
   // A thin dielectric film (IOR 1.5, F0 = 0.04) layered over the base material.
   // Follows the glTF Sample Viewer layering: the base is attenuated by the coat's
   // reflectance, then the coat's own specular lobe is added on top.
-  if ((pc.flags & 4u) != 0u && pc.clearcoatFactor > 0.0)
+  if ((flags & 4u) != 0u && clearcoatFactor > 0.0)
   {
-    float cc = pc.clearcoatFactor * texture(clearcoatTexture, fragTexCoord).r;
+    float cc = clearcoatFactor * texture(clearcoatTexture, uvCC).r;
     float ccPerceptualRough = clamp(
-      pc.clearcoatRoughnessFactor * texture(clearcoatRoughnessTexture, fragTexCoord).g,
+      clearcoatRoughnessFactor * texture(clearcoatRoughnessTexture, uvCCR).g,
       0.0, 1.0);
     float ccAlpha = ccPerceptualRough * ccPerceptualRough;
 
     // Coat normal: dedicated map if present (flags bit 3), else the geometric
     // normal — the smooth coat does NOT inherit the base material's normal map.
     vec3 ccN;
-    if ((pc.flags & 8u) != 0u) {
-      vec3 nm = texture(clearcoatNormalTexture, fragTexCoord).rgb * 2.0 - 1.0;
+    if ((flags & 8u) != 0u) {
+      vec3 nm = texture(clearcoatNormalTexture, uvCCN).rgb * 2.0 - 1.0;
       ccN = normalize(fragTBN * nm);
     } else {
       ccN = normalize(fragNormal);

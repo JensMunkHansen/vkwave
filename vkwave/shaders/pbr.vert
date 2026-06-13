@@ -16,18 +16,21 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec3 inColor;
 layout(location = 3) in vec2 inTexCoord;
 layout(location = 4) in vec4 inTangent;  // xyz=tangent, w=handedness
+layout(location = 5) in vec2 inTexCoord1; // second UV set (glTF TEXCOORD_1)
 
-// Push constant (model matrix)
+// Push constant — must match PbrPushConstants (C++) and pbr.frag exactly.
 layout(push_constant) uniform PushConstants {
   mat4 model;
-  vec4 baseColorFactor;
-  float metallicFactor;
-  float roughnessFactor;
-  float time;
+  uint materialIndex;
+  uint globalFlags;
   int debugMode;
-  uint flags;
-  uint alphaMode;
-  float alphaCutoff;
+  float time;
+  float metallicOverride;
+  float roughnessOverride;
+  float clearcoatOverride;
+  float clearcoatRoughnessOverride;
+  float anisotropyOverride;
+  float anisotropyRotationOverride;
 } pc;
 
 // Outputs to fragment shader
@@ -36,6 +39,7 @@ layout(location = 1) out vec3 fragNormal;
 layout(location = 2) out vec3 fragPos;
 layout(location = 3) out vec2 fragTexCoord;
 layout(location = 4) out mat3 fragTBN;  // locations 4, 5, 6
+layout(location = 7) out vec2 fragTexCoord1;
 
 void main()
 {
@@ -45,6 +49,7 @@ void main()
   gl_Position = ubo.viewProj * worldPos;
   fragColor = inColor;
   fragTexCoord = inTexCoord;
+  fragTexCoord1 = inTexCoord1;
 
   // Transform normal by model matrix (upper 3x3)
   mat3 normalMatrix = mat3(pc.model);

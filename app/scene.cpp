@@ -449,11 +449,25 @@ void Scene::draw_ui(Engine& app, double avg_fps)
     ImGui::SliderFloat("Aniso Rotation", &pbr_ctx.anisotropy_rotation_override, 0.0f, 6.2831853f);
   }
 
-  // Material overrides (legacy single-draw path)
+  // Material overrides (preview): force metallic/roughness onto every material,
+  // e.g. to tweak the single-material cube. Off by default (materials use their
+  // authored SSBO values).
   ImGui::Separator();
   ImGui::Text("Material Overrides");
-  ImGui::SliderFloat("Metallic", &pbr_pass.metallic_factor, 0.0f, 1.0f);
-  ImGui::SliderFloat("Roughness", &pbr_pass.roughness_factor, 0.0f, 1.0f);
+
+  static bool met_override = false;
+  static float met_value = 1.0f;
+  if (ImGui::Checkbox("Override Metallic", &met_override))
+    pbr_ctx.metallic_override = met_override ? met_value : -1.0f;
+  if (met_override && ImGui::SliderFloat("Metallic", &met_value, 0.0f, 1.0f))
+    pbr_ctx.metallic_override = met_value;
+
+  static bool rough_override = false;
+  static float rough_value = 1.0f;
+  if (ImGui::Checkbox("Override Roughness", &rough_override))
+    pbr_ctx.roughness_override = rough_override ? rough_value : -1.0f;
+  if (rough_override && ImGui::SliderFloat("Roughness", &rough_value, 0.0f, 1.0f))
+    pbr_ctx.roughness_override = rough_value;
 
   ImGui::Separator();
   if (screenshot_requested || screenshot_in_flight || screenshot_compressing)

@@ -174,6 +174,13 @@ int main(int argc, char** argv)
     scene.data.camera.set_position(0.0f, 1.5f, 3.0f);
     scene.data.camera.set_focal_point(0.0f, 0.0f, 0.0f);
   }
+
+  // Optional camera orbit (mainly for headless screenshots / testing)
+  if (app.config.cam_azimuth != 0.0f)
+    scene.data.camera.azimuth(app.config.cam_azimuth);
+  if (app.config.cam_elevation != 0.0f)
+    scene.data.camera.elevation(app.config.cam_elevation);
+
   scene.data.camera.set_aspect_ratio(
     static_cast<float>(app.swapchain->extent().width) /
     static_cast<float>(app.swapchain->extent().height));

@@ -25,6 +25,10 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     parser, "path", "Output path for --screenshot (default: timestamped name)", {"screenshot-out"});
   args::ValueFlag<int> debug_mode(
     parser, "N", "Force PBR debug view (0=Final 1=Normals 2=BaseColor 3=Metallic 4=Roughness 5=AO 6=Emissive 7=Clearcoat)", {"debug-mode"});
+  args::ValueFlag<float> azimuth_flag(
+    parser, "deg", "Orbit camera azimuth (degrees) after framing — for screenshots/testing", {"azimuth"});
+  args::ValueFlag<float> elevation_flag(
+    parser, "deg", "Orbit camera elevation (degrees) after framing — for screenshots/testing", {"elevation"});
 
   try
   {
@@ -63,6 +67,10 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     config.screenshot_path = args::get(screenshot_out);
   if (debug_mode)
     config.debug_mode = args::get(debug_mode);
+  if (azimuth_flag)
+    config.cam_azimuth = args::get(azimuth_flag);
+  if (elevation_flag)
+    config.cam_elevation = args::get(elevation_flag);
 
   return true;
 }

@@ -54,10 +54,10 @@ void Input::on_scroll(GLFWwindow* window, double yoffset)
 
   float factor = 1.0f + static_cast<float>(yoffset) * 0.1f;
 
-  // Ctrl+scroll = zoom (FOV), plain scroll = dolly (position)
+  // Plain scroll = zoom (FOV), Ctrl+scroll = dolly (position)
   if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS
       || glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS)
-    camera->zoom(factor);
-  else
     camera->dolly(factor);
+  else
+    camera->zoom(factor);
 }
