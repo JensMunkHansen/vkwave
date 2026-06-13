@@ -39,11 +39,17 @@ enum class GatingMode
   wall_clock      ///< Submit at most N times per second
 };
 
-/// Semaphore + value pair for mixed binary/timeline waits.
+/// Semaphore + value + wait-stage for mixed binary/timeline waits.
 struct SemaphoreWait
 {
   vk::Semaphore semaphore;
   uint64_t value{ 0 }; ///< 0 for binary semaphores, >0 for timeline
+  /// Pipeline stage(s) the wait gates. MUST cover where the awaited resource is
+  /// first consumed, or earlier stages run unsynchronized (e.g. a fragment
+  /// shader sampling a still-being-written image). Defaults to color-attachment
+  /// output (correct for a swapchain-image acquire); inter-pass dependencies
+  /// should broaden it to cover the consumer.
+  vk::PipelineStageFlags stage{ vk::PipelineStageFlagBits::eColorAttachmentOutput };
 };
 
 /// Base class for groups that submit command buffers each frame.

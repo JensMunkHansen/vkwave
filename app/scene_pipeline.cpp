@@ -3,6 +3,7 @@
 #include "engine.h"
 
 #include <cmath>
+#include <vector>
 
 #include <vkwave/core/buffer.h>
 #include <vkwave/core/device.h>
@@ -21,22 +22,6 @@ static constexpr bool kDebug =
 #else
   false;
 #endif
-
-// ---------------------------------------------------------------------------
-// HDR image management
-// ---------------------------------------------------------------------------
-
-void ScenePipeline::create_hdr_images(vk::Extent2D extent, uint32_t count)
-{
-  hdr_images.clear();
-  for (uint32_t i = 0; i < count; ++i)
-  {
-    hdr_images.emplace_back(*m_engine->device, kHdrFormat, extent,
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled
-        | vk::ImageUsageFlagBits::eTransferSrc,
-      fmt::format("hdr_image_{}", i));
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -67,22 +52,23 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
     hdr_sampler = engine.device->device().createSampler(info);
   }
 
-  // One HDR image per offscreen slot -- eliminates WAW hazard
-  const uint32_t os_depth = engine.swapchain->image_count();
-  create_hdr_images(engine.swapchain->extent(), os_depth);
+  // Register the graph-owned, per-slot HDR target (eliminates the WAW hazard)
+  // and depth buffer. Per-slot depth lets frames overlap on the GPU yet lets
+  // same-frame passes (e.g. opaque + transmission) share one depth buffer.
+  hdr_handle = engine.graph->resources().add_color("hdr_image", kHdrFormat,
+    vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled
+      | vk::ImageUsageFlagBits::eTransferSrc);
+  depth_handle = engine.graph->resources().add_depth("scene_depth", kDepthFormat,
+    msaa_samples);
 
-  // PBR pass: renders to offscreen HDR image
+  // PBR pass: renders to the graph-owned HDR target + depth
   auto pbr_spec = vkwave::PBRPass::pipeline_spec();
   pbr_spec.existing_renderpass = scene_renderpass;
   pbr_spec.msaa_samples = msaa_samples;
 
-  std::vector<vk::ImageView> hdr_views;
-  hdr_views.reserve(os_depth);
-  for (uint32_t i = 0; i < os_depth; ++i)
-    hdr_views.push_back(hdr_images[i].image_view());
-
   auto& pbr_grp = engine.graph->add_offscreen_group("pbr", pbr_spec, kHdrFormat, kDebug);
-  pbr_grp.set_color_views(hdr_views);
+  pbr_grp.set_color_attachment(engine.graph->resources(), hdr_handle);
+  pbr_grp.set_depth_attachment(engine.graph->resources(), depth_handle);
 
   // Descriptor set frequency layout:
   //   Set 0: per-frame UBO (ring-buffered, count = swapchain images) -- default
@@ -118,18 +104,8 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
     engine.window.get(), engine.swapchain->image_format(),
     engine.swapchain->image_count(), kDebug);
 
-  // Set resize callback so the graph can recreate offscreen images on resize
-  engine.graph->set_resize_fn([this](vk::Extent2D extent) {
-    auto depth = m_engine->graph->offscreen_depth();
-    create_hdr_images(extent, depth);
-
-    std::vector<vk::ImageView> views;
-    views.reserve(depth);
-    for (uint32_t i = 0; i < depth; ++i)
-      views.push_back(hdr_images[i].image_view());
-    auto& grp = static_cast<vkwave::ExecutionGroup&>(m_engine->graph->offscreen_group(0));
-    grp.set_color_views(views);
-  });
+  // No resize callback needed: the graph owns the HDR pool and recreates it on
+  // resize, and the pbr group re-resolves its color attachment from the pool.
 
   // Declare the pass-dependency edge: composite consumes the pbr group's HDR
   // output, so it waits on the pbr timeline (replaces the graph's implicit
@@ -142,8 +118,10 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
   // Write texture descriptors (after build allocates descriptor sets)
   write_pbr_descriptors(data);
 
-  // Write HDR image descriptor to composite pass
-  comp_grp.write_image_descriptor(0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
+  // Write HDR image descriptor to composite pass (slot 0; the per-frame record
+  // callback rebinds the correct slot each frame).
+  comp_grp.write_image_descriptor(0, "hdrImage",
+    engine.graph->resources().color_view(hdr_handle, 0), hdr_sampler);
 
   // Overlay framebuffers reference swapchain image views -- create after build
   imgui->create_frame_resources(*engine.swapchain, engine.swapchain->image_count());
@@ -152,7 +130,6 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
 ScenePipeline::~ScenePipeline()
 {
   imgui.reset();
-  hdr_images.clear();
 
   auto dev = m_engine->device->device();
   if (hdr_sampler)
@@ -366,13 +343,18 @@ void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
   auto& new_grp = m_engine->graph->replace_offscreen_group(
     0, "pbr", pbr_spec, kHdrFormat, kDebug);
 
-  // Update color views from existing HDR images
+  // Point the new group at the graph-owned HDR target (unchanged by MSAA — the
+  // single-sample HDR is the resolve/sampled target; MSAA scratch is internal).
   const uint32_t os_depth = m_engine->graph->offscreen_depth();
-  std::vector<vk::ImageView> hdr_views;
-  hdr_views.reserve(os_depth);
-  for (uint32_t i = 0; i < os_depth; ++i)
-    hdr_views.push_back(hdr_images[i].image_view());
-  new_grp.set_color_views(hdr_views);
+  auto& pool = m_engine->graph->resources();
+  new_grp.set_color_attachment(pool, hdr_handle);
+
+  // Depth must match the new MSAA sample count: update the pool depth and
+  // re-allocate it (the caller has drained the GPU), then bind it to the new
+  // group before its framebuffers are built.
+  pool.set_depth_samples(depth_handle, msaa_samples);
+  pool.recreate(*m_engine->device);
+  new_grp.set_depth_attachment(pool, depth_handle);
 
   // Set descriptor counts
   new_grp.set_descriptor_count(1, data.material_count());
@@ -380,6 +362,10 @@ void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
 
   // Rebuild frame resources for this group
   new_grp.create_frame_resources(extent, os_depth);
+
+  // The pool re-alloc gave the HDR target fresh views; rebind composite's sampler.
+  composite_group().write_image_descriptor(
+    0, "hdrImage", pool.color_view(hdr_handle, 0), hdr_sampler);
 
   // Re-declare the dependency edge: replace_offscreen_group built a new pbr
   // group, so the composite group's stored predecessor pointer now dangles.
@@ -407,7 +393,7 @@ void ScenePipeline::resize(const vkwave::Swapchain& swapchain, SceneData& data)
 
   // Update composite pass's HDR image descriptor after resize rebuilt everything
   composite_group().write_image_descriptor(
-    0, "hdrImage", hdr_images[0].image_view(), hdr_sampler);
+    0, "hdrImage", m_engine->graph->resources().color_view(hdr_handle, 0), hdr_sampler);
 
   // Re-write PBR texture descriptors (descriptor sets were recreated)
   write_pbr_descriptors(data);

@@ -163,7 +163,7 @@ void SubmissionGroup::submit(
   {
     wait_sems.push_back(w.semaphore);
     wait_values.push_back(w.value);
-    wait_stages.push_back(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    wait_stages.push_back(w.stage);
   }
 
   // Signal semaphores: always timeline, conditionally binary present

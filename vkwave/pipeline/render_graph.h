@@ -2,6 +2,7 @@
 
 #include <vkwave/core/semaphore.h>
 #include <vkwave/pipeline/execution_group.h>
+#include <vkwave/pipeline/frame_resource_pool.h>
 #include <vkwave/pipeline/submission_group.h>
 
 #include <vulkan/vulkan.hpp>
@@ -44,6 +45,10 @@ class RenderGraph
 
   // Present group (acquires swapchain image, submits, presents)
   std::unique_ptr<SubmissionGroup> m_present_group;
+
+  // Graph-owned per-slot render resources (HDR targets, depth, ...). Passes
+  // reference these by handle instead of owning the images themselves.
+  FrameResourcePool m_resources;
 
   std::vector<std::unique_ptr<Semaphore>> m_acquire_semaphores;
   std::vector<uint32_t> m_sem_to_image; // last image_index paired with each sem_index
@@ -122,6 +127,10 @@ public:
 
   /// Access the present group.
   [[nodiscard]] SubmissionGroup& present_group() { return *m_present_group; }
+
+  /// Graph-owned per-slot resource pool. Register resources (depth, HDR
+  /// targets, ...) before build(); they are (re)created across build()/resize().
+  [[nodiscard]] FrameResourcePool& resources() { return m_resources; }
 
   [[nodiscard]] uint64_t cpu_frame() const { return m_cpu_frame; }
   [[nodiscard]] uint32_t offscreen_depth() const;
