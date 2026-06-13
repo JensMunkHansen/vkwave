@@ -191,3 +191,18 @@ infrastructure (`commands.h::submit_one_shot`).
   the window during load ("application not responding"). Fixes: batch all
   uploads into one command buffer / submission, and/or load on a worker thread.
   A natural place to reuse the F4 mip-generation and the compute queue (F2).
+
+- **Enable synchronization validation in debug builds.** The standard
+  validation layer catches API misuse (wrong layouts, missing usage flags,
+  object lifetimes) but **not synchronization hazards** — a missing or
+  too-narrow barrier produces *correct-looking API calls* that race on the GPU.
+  The engine declares ordering (`depends_on`) and barriers (render-pass
+  layouts; explicit `vkCmdPipelineBarrier` for transfers/compute) **by hand** —
+  there is no auto-derived frame graph — so a missed barrier is a developer
+  error, not a compile or validation error. Vulkan's **synchronization
+  validation** (`VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT`,
+  enabled via `VkValidationFeaturesEXT` on the instance `pNext`) detects
+  RAW/WAR/WAW hazards across draws, copies, and dispatches. It would have caught
+  the pbr→composite wait-stage bug (which produced torn frames with *zero*
+  standard-validation errors). Worth turning on as the backstop for hand-written
+  sync — especially as transmission adds the first cross-queue snapshot pass.
