@@ -4,6 +4,7 @@
 #include <vkwave/core/push_constants.h>
 #include <vkwave/pipeline/shader_compiler.h>
 #include <vkwave/pipeline/shader_reflection.h>
+#include <vkwave/pipeline/topo_order.h>
 
 // Ensure a ShaderCompiler instance exists for all tests in this file.
 // The Registered<> weak_ptr keeps it alive as long as this shared_ptr does.
@@ -97,4 +98,41 @@ TEST_CASE("vkwave::pipeline::reflection_extracts_cube_push_constants", "[pipelin
   reflection.finalize();
 
   reflection.validate_push_constant_size(sizeof(vkwave::CubePushConstants));
+}
+
+// --- Pass-dependency DAG topological ordering (F1) ---
+
+TEST_CASE("vkwave::pipeline::topo_order_no_edges_is_identity", "[pipeline]")
+{
+  // No dependencies -> stable insertion order [0,1,2].
+  auto order = vkwave::topological_order({ {}, {}, {} });
+  REQUIRE(order == std::vector<size_t>{ 0, 1, 2 });
+}
+
+TEST_CASE("vkwave::pipeline::topo_order_linear_chain", "[pipeline]")
+{
+  // 2 depends on 1 depends on 0 -> [0,1,2].
+  auto order = vkwave::topological_order({ {}, { 0 }, { 1 } });
+  REQUIRE(order == std::vector<size_t>{ 0, 1, 2 });
+}
+
+TEST_CASE("vkwave::pipeline::topo_order_diamond", "[pipeline]")
+{
+  // 0 -> {1,2} -> 3. 0 must be first, 3 last; 1 before 2 (stable).
+  auto order = vkwave::topological_order({ {}, { 0 }, { 0 }, { 1, 2 } });
+  REQUIRE(order.front() == 0);
+  REQUIRE(order.back() == 3);
+  REQUIRE(order == std::vector<size_t>{ 0, 1, 2, 3 });
+}
+
+TEST_CASE("vkwave::pipeline::topo_order_empty", "[pipeline]")
+{
+  auto order = vkwave::topological_order({});
+  REQUIRE(order.empty());
+}
+
+TEST_CASE("vkwave::pipeline::topo_order_cycle_throws", "[pipeline]")
+{
+  // 0 depends on 1 and 1 depends on 0 -> cycle.
+  CHECK_THROWS_AS(vkwave::topological_order({ { 1 }, { 0 } }), std::runtime_error);
 }

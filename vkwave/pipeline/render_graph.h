@@ -62,6 +62,11 @@ class RenderGraph
 
   uint32_t m_last_offscreen_slot{ 0 };
 
+  // Topological submission order of offscreen groups (indices into
+  // m_offscreen_groups), derived from declared dependencies in build().
+  // Storage order is never reordered, so offscreen_group(i) stays stable.
+  std::vector<size_t> m_submit_order;
+
   // Resize callback — called after offscreen resources are destroyed, before rebuild
   std::function<void(vk::Extent2D)> m_resize_fn;
 

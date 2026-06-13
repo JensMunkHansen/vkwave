@@ -2,14 +2,33 @@
 
 #include <vkwave/core/device.h>
 #include <vkwave/core/swapchain.h>
+#include <vkwave/pipeline/topo_order.h>
 
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
 #include <cassert>
+#include <unordered_map>
 
 namespace vkwave
 {
+
+namespace
+{
+// Collect timeline waits for a group from its declared dependencies.
+// A predecessor that has not yet signaled this run (value 0) is skipped.
+std::vector<SemaphoreWait> dependency_waits(const SubmissionGroup& group)
+{
+  std::vector<SemaphoreWait> waits;
+  for (auto* dep : group.dependencies())
+  {
+    const uint64_t value = dep->latest_signal_value();
+    if (value > 0)
+      waits.push_back({ dep->timeline_semaphore(), value });
+  }
+  return waits;
+}
+} // namespace
 
 RenderGraph::RenderGraph(const Device& device)
   : m_device(device)
@@ -91,6 +110,28 @@ void RenderGraph::build(const Swapchain& swapchain)
   // Create present group resources (uses swapchain views)
   if (m_present_group)
     m_present_group->create_frame_resources(swapchain, m_swapchain_image_count);
+
+  // Derive the topological submission order of offscreen groups from declared
+  // dependencies. With no declared edges this is the identity order, matching
+  // the previous insertion-order behavior.
+  {
+    const size_t n = m_offscreen_groups.size();
+    std::unordered_map<const SubmissionGroup*, size_t> index_of;
+    index_of.reserve(n);
+    for (size_t i = 0; i < n; ++i)
+      index_of[m_offscreen_groups[i].get()] = i;
+
+    std::vector<std::vector<size_t>> deps(n);
+    for (size_t i = 0; i < n; ++i)
+      for (auto* d : m_offscreen_groups[i]->dependencies())
+      {
+        auto it = index_of.find(d);
+        if (it != index_of.end()) // ignore deps outside the offscreen set
+          deps[i].push_back(it->second);
+      }
+
+    m_submit_order = topological_order(deps); // throws on cycle
+  }
 }
 
 void RenderGraph::drain()
@@ -145,10 +186,17 @@ bool RenderGraph::render_frame(const Swapchain& swapchain)
   uint32_t offscreen_slot = static_cast<uint32_t>(m_cpu_frame % os_depth);
   m_last_offscreen_slot = offscreen_slot;
 
-  for (auto& group : m_offscreen_groups)
+  // Submit offscreen groups in topological order; each waits on the timeline
+  // signals of its declared predecessors. Fall back to storage order if the
+  // submit order is stale (e.g. a group added after build()).
+  const bool order_valid = (m_submit_order.size() == m_offscreen_groups.size());
+  for (size_t k = 0; k < m_offscreen_groups.size(); ++k)
   {
-    group->begin_frame(offscreen_slot);
-    group->submit(offscreen_slot, {}, m_device.graphics_queue(), m_elapsed_time);
+    const size_t idx = order_valid ? m_submit_order[k] : k;
+    auto& group = *m_offscreen_groups[idx];
+    group.begin_frame(offscreen_slot);
+    auto waits = dependency_waits(group);
+    group.submit(offscreen_slot, waits, m_device.graphics_queue(), m_elapsed_time);
   }
 
   // 2. Conditionally submit present group
@@ -186,11 +234,18 @@ bool RenderGraph::render_frame(const Swapchain& swapchain)
 
     m_sem_to_image[sem_index] = image_index;
 
-    // Present group waits on: acquire binary semaphore + offscreen timeline
+    // Present group waits on: acquire binary semaphore + its declared
+    // dependencies' timeline signals. If no dependencies were declared, fall
+    // back to waiting on the last offscreen group (legacy behavior).
     std::vector<SemaphoreWait> present_waits;
     present_waits.push_back({ *m_acquire_semaphores[sem_index]->semaphore(), 0 });
 
-    if (!m_offscreen_groups.empty())
+    auto declared = dependency_waits(*m_present_group);
+    if (!declared.empty())
+    {
+      present_waits.insert(present_waits.end(), declared.begin(), declared.end());
+    }
+    else if (!m_offscreen_groups.empty())
     {
       auto& last_offscreen = *m_offscreen_groups.back();
       auto tl_value = last_offscreen.latest_signal_value();

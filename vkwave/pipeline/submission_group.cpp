@@ -7,6 +7,8 @@
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
+#include <cassert>
+
 namespace vkwave
 {
 
@@ -213,6 +215,15 @@ vk::Semaphore SubmissionGroup::timeline_semaphore() const
 uint64_t SubmissionGroup::latest_signal_value() const
 {
   return (m_next_timeline_value > 1) ? (m_next_timeline_value - 1) : 0;
+}
+
+void SubmissionGroup::depends_on(SubmissionGroup& predecessor)
+{
+  assert(&predecessor != this && "submission group cannot depend on itself");
+  for (auto* d : m_dependencies)
+    if (d == &predecessor)
+      return; // already declared
+  m_dependencies.push_back(&predecessor);
 }
 
 const vk::Semaphore* SubmissionGroup::present_semaphore(uint32_t slot) const

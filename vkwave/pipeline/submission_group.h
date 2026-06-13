@@ -113,6 +113,21 @@ public:
   /// Get the latest signaled timeline value (0 if never submitted).
   [[nodiscard]] uint64_t latest_signal_value() const;
 
+  /// Declare that this group depends on `predecessor` — the render graph will
+  /// make this group's submit wait on the predecessor's timeline signal and
+  /// order submission so predecessors run first. Idempotent; self-edges assert.
+  void depends_on(SubmissionGroup& predecessor);
+
+  /// Remove all declared dependencies. Call before re-declaring edges after a
+  /// group has been replaced (the stored pointers would otherwise dangle).
+  void clear_dependencies() { m_dependencies.clear(); }
+
+  /// Groups this one depends on (predecessors).
+  [[nodiscard]] const std::vector<SubmissionGroup*>& dependencies() const
+  {
+    return m_dependencies;
+  }
+
   [[nodiscard]] vk::Extent2D extent() const { return m_extent; }
   [[nodiscard]] const vk::Semaphore* present_semaphore(uint32_t slot) const;
 
@@ -146,6 +161,9 @@ private:
 
   // Optional fence for next submit (screenshot capture, etc.)
   vk::Fence m_next_fence{ VK_NULL_HANDLE };
+
+  // Declared predecessors (this group waits on their timeline signals).
+  std::vector<SubmissionGroup*> m_dependencies;
 
   // Gating
   GatingMode m_gating{ GatingMode::always };

@@ -51,6 +51,8 @@ double Engine::update_fps()
   {
     m_avg_fps = m_fps_frames / elapsed;
     window.set_title(fmt::format("{} — {:.0f} fps", config.window_title, m_avg_fps));
+    // Also log so throughput is visible headlessly (e.g. immediate present mode).
+    spdlog::info("{:.0f} fps", m_avg_fps);
     m_fps_frames = 0;
     m_fps_time = now;
   }

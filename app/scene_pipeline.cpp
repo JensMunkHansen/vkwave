@@ -131,6 +131,11 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
     grp.set_color_views(views);
   });
 
+  // Declare the pass-dependency edge: composite consumes the pbr group's HDR
+  // output, so it waits on the pbr timeline (replaces the graph's implicit
+  // "present waits on last offscreen" default).
+  comp_grp.depends_on(pbr_grp);
+
   // Build all frame resources
   engine.graph->build(*engine.swapchain);
 
@@ -375,6 +380,12 @@ void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
 
   // Rebuild frame resources for this group
   new_grp.create_frame_resources(extent, os_depth);
+
+  // Re-declare the dependency edge: replace_offscreen_group built a new pbr
+  // group, so the composite group's stored predecessor pointer now dangles.
+  auto& comp_grp = composite_group();
+  comp_grp.clear_dependencies();
+  comp_grp.depends_on(new_grp);
 
   // Rewrite descriptors
   write_pbr_descriptors(data);
