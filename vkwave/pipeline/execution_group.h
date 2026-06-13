@@ -3,6 +3,7 @@
 #include <vkwave/core/buffer.h>
 #include <vkwave/core/depth_stencil_attachment.h>
 #include <vkwave/core/image.h>
+#include <vkwave/pipeline/frame_resource_pool.h>
 #include <vkwave/pipeline/shader_reflection.h>
 #include <vkwave/pipeline/submission_group.h>
 
@@ -82,6 +83,11 @@ class ExecutionGroup : public SubmissionGroup
   // Offscreen color views (when set, used instead of swapchain views for framebuffers)
   std::vector<vk::ImageView> m_color_views;
 
+  // Graph-owned pool color attachment (when set, resolved per slot at
+  // framebuffer creation instead of using m_color_views).
+  const FrameResourcePool* m_color_pool{ nullptr };
+  FrameResourcePool::ColorHandle m_color_handle{ 0 };
+
   // Clear values for render pass begin
   std::vector<vk::ClearValue> m_clear_values;
 
@@ -116,6 +122,13 @@ public:
   /// Set offscreen color views (used instead of swapchain views for framebuffers).
   /// Call before create_frame_resources().
   void set_color_views(std::vector<vk::ImageView> views);
+
+  /// Use a graph-owned pool color resource as this group's color attachment,
+  /// resolved per slot at framebuffer-creation time. Preferred over
+  /// set_color_views() for offscreen groups — the group then re-resolves from
+  /// the pool on resize with no external re-push. Call before create_frame_resources().
+  void set_color_attachment(const FrameResourcePool& pool,
+                            FrameResourcePool::ColorHandle handle);
 
   /// Create/recreate size-dependent resources (framebuffers, depth buffer, UBOs, descriptors).
   void create_frame_resources(const Swapchain& swapchain, uint32_t count) override;

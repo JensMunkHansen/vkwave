@@ -101,8 +101,8 @@ void Scene::wire_record_callbacks()
         return; // buffer too small — will grow next frame
 
       auto slot = m_engine->graph->last_offscreen_slot();
-      auto& hdr_img = pipeline->hdr_images[slot];
-      record_hdr_screenshot_copy(cmd, hdr_img.image(), extent, screenshot_readback->buffer());
+      auto hdr_image = m_engine->graph->resources().color_image(pipeline->hdr_handle, slot);
+      record_hdr_screenshot_copy(cmd, hdr_image, extent, screenshot_readback->buffer());
 
       // Arm the fence — only this copy is serialized, frames keep pipelining
       screenshot_fence->reset();
@@ -119,7 +119,8 @@ void Scene::wire_record_callbacks()
       auto slot = m_engine->graph->last_offscreen_slot();
       pipeline->composite_group().write_image_descriptor(
         0, "hdrImage", frame_index,
-        pipeline->hdr_images[slot].image_view(), pipeline->hdr_sampler);
+        m_engine->graph->resources().color_view(pipeline->hdr_handle, slot),
+        pipeline->hdr_sampler);
       composite_pass.record(cmd);
     });
 

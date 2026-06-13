@@ -1,24 +1,25 @@
 #pragma once
 
-#include <vkwave/core/image.h>
+#include <vkwave/pipeline/frame_resource_pool.h>
 #include <vkwave/pipeline/imgui_overlay.h>
 
 #include <vulkan/vulkan.hpp>
 
 #include <memory>
-#include <vector>
 
 struct Engine;
 struct SceneData;
 namespace vkwave { class ExecutionGroup; class Swapchain; class Buffer; }
 
-/// Pipeline infrastructure: render passes, HDR images, sampler, execution
-/// group wiring, ImGui, MSAA. References SceneData for descriptor writes.
+/// Pipeline infrastructure: render passes, sampler, execution group wiring,
+/// ImGui, MSAA. The HDR render target is owned by the render graph's resource
+/// pool (referenced here by handle). References SceneData for descriptor writes.
 struct ScenePipeline
 {
   static constexpr vk::Format kHdrFormat = vk::Format::eR16G16B16A16Sfloat;
 
-  std::vector<vkwave::Image> hdr_images;
+  // Graph-owned HDR color target (one per slot), referenced by handle.
+  vkwave::FrameResourcePool::ColorHandle hdr_handle{ 0 };
   vk::Sampler hdr_sampler{ VK_NULL_HANDLE };
   vk::RenderPass scene_renderpass{ VK_NULL_HANDLE };
   vk::RenderPass composite_renderpass{ VK_NULL_HANDLE };
@@ -61,6 +62,4 @@ private:
   /// (Re)build the material SSBO from the active materials and write its
   /// descriptor to set 2. Called from write_pbr_descriptors().
   void upload_material_buffer(SceneData& data);
-
-  void create_hdr_images(vk::Extent2D extent, uint32_t count);
 };
