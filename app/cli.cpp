@@ -29,6 +29,10 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     parser, "deg", "Orbit camera azimuth (degrees) after framing — for screenshots/testing", {"azimuth"});
   args::ValueFlag<float> elevation_flag(
     parser, "deg", "Orbit camera elevation (degrees) after framing — for screenshots/testing", {"elevation"});
+  args::ValueFlag<float> mip_bias_flag(
+    parser, "bias", "Texture LOD bias (0 = mipmapped; e.g. -16 forces mip 0 / no mips) — for A/B", {"mip-bias"});
+  args::ValueFlag<float> dolly_flag(
+    parser, "factor", "Dolly factor after framing (<1 = pull back / zoom out)", {"dolly"});
 
   try
   {
@@ -71,6 +75,10 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     config.cam_azimuth = args::get(azimuth_flag);
   if (elevation_flag)
     config.cam_elevation = args::get(elevation_flag);
+  if (mip_bias_flag)
+    config.mip_bias = args::get(mip_bias_flag);
+  if (dolly_flag)
+    config.cam_dolly = args::get(dolly_flag);
 
   return true;
 }

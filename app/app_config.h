@@ -37,6 +37,8 @@ struct AppConfig
   // screenshots / testing, so a model can be viewed from any angle.
   float cam_azimuth{ 0.0f };             // orbit degrees about the view-up axis
   float cam_elevation{ 0.0f };           // orbit degrees up/down
+  float cam_dolly{ 1.0f };               // dolly factor after framing (<1 = pull back / zoom out)
+  float mip_bias{ 0.0f };                // texture LOD bias (0 = mipmapped; large negative forces mip 0)
 
   // [debug]
   uint64_t max_frames{ 0 };      // 0 = unlimited, >0 = exit after N frames
