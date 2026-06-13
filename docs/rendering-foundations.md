@@ -173,3 +173,14 @@ F2's queue) to build mip chains. This unblocks roughness-based blur (for
 transmission) and lets IBL's bespoke mip/transition code — and its
 `begin/end_single_time_commands` helpers — migrate onto the shared
 infrastructure (`commands.h::submit_one_shot`).
+
+---
+
+## Minor follow-ups
+
+- **MSAA depth could be transient.** The multisample depth buffer is only used
+  within the scene pass — never resolved or sampled — so it could carry
+  `VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT` (the MSAA color attachment already
+  does, via the `Image` constructor). With lazily-allocated memory this avoids
+  backing store; a minor bandwidth/memory win, mostly on tile-based GPUs.
+  `DepthStencilAttachment` currently always uses `eDepthStencilAttachment` only.
