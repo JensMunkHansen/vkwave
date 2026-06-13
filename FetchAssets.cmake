@@ -91,6 +91,7 @@ set(_GLB_MODELS
   CarConcept         # multi-extension concept car (clearcoat, anisotropy, etc.)
   ABeautifulGame     # chess set on a flat board — texture mip / minification demo
   TextureCoordinateTest # flat UV-grid plane — canonical minification-aliasing demo
+  TransmissionTest   # KHR_materials_transmission conformance test (glass grid)
 )
 
 foreach(_model IN LISTS _GLB_MODELS)

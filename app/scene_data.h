@@ -46,6 +46,11 @@ struct SceneData
   /// Number of materials (at least 1 for single-material fallback).
   [[nodiscard]] uint32_t material_count() const;
 
+  /// True if any active material is transmissive (KHR_materials_transmission).
+  /// Scanned once per scene (like has_multi_material); drives whether the graph
+  /// allocates the per-slot transmission snapshot + creates the refraction pass.
+  [[nodiscard]] bool has_transmission() const;
+
   /// Load a new model, replacing the current one. GPU must be drained by caller.
   void load_model(const vkwave::Device& device, const std::string& path);
 
