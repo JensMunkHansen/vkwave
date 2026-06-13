@@ -33,6 +33,12 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     parser, "bias", "Texture LOD bias (0 = mipmapped; e.g. -16 forces mip 0 / no mips) — for A/B", {"mip-bias"});
   args::ValueFlag<float> dolly_flag(
     parser, "factor", "Dolly factor after framing (<1 = pull back / zoom out)", {"dolly"});
+  args::Flag fullscreen_flag(
+    parser, "fullscreen", "Run fullscreen (exclusive) instead of windowed", {"fullscreen"});
+  args::Flag borderless_flag(
+    parser, "borderless", "Run borderless windowed-fullscreen (desktop resolution)", {"borderless"});
+  args::ValueFlag<uint32_t> frames_in_flight_flag(
+    parser, "N", "Offscreen frames-in-flight / ring depth (0 = swapchain count). Lower cuts VRAM at high MSAA.", {"frames-in-flight"});
 
   try
   {
@@ -79,6 +85,12 @@ bool parse_cli(int argc, char** argv, AppConfig& config, std::string& config_pat
     config.mip_bias = args::get(mip_bias_flag);
   if (dolly_flag)
     config.cam_dolly = args::get(dolly_flag);
+  if (fullscreen_flag)
+    config.window_mode = "fullscreen";
+  if (borderless_flag)
+    config.window_mode = "windowed_fullscreen";
+  if (frames_in_flight_flag)
+    config.frames_in_flight = args::get(frames_in_flight_flag);
 
   return true;
 }

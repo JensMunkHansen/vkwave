@@ -99,6 +99,11 @@ public:
                                      vk::Format swapchain_format,
                                      bool debug);
 
+  /// Remove the last offscreen group (drains, frees its frame resources, pops it
+  /// and refreshes the submit order). Used to drop the transmission group when an
+  /// MSAA change makes it invalid — surgical, unlike reset_structure().
+  void remove_last_offscreen_group();
+
   /// Set ring buffer depth for offscreen groups.
   /// Must be called before build(). Default: swapchain image count.
   void set_offscreen_depth(uint32_t n) { m_offscreen_depth = n; }

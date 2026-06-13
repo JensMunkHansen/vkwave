@@ -76,14 +76,16 @@ void ScenePipeline::build_scene_graph(SceneData& data)
   auto dev = engine.device->device();
   auto& pool = engine.graph->resources();
 
-  // Phase-1 transmission is e1-only: a single-sample transmission pass cannot
-  // share an MSAA (multisample) depth buffer (matching sample counts within a
-  // subpass; depth resolve is a later task). So gate on glass AND no MSAA.
-  m_graph_has_transmission =
-    data.has_transmission() && msaa_samples == vk::SampleCountFlagBits::e1;
+  const bool has_glass = data.has_transmission();
+  // The transmission *pass* is e1-only: a single-sample pass cannot share an MSAA
+  // (multisample) depth buffer (subpass sample counts must match; depth resolve
+  // is a later task). The *snapshot* pool resource is registered for any glass
+  // scene regardless of MSAA, so toggling MSAA only adds/removes the group — not
+  // pool resources (keeps the incremental MSAA path off the structural rebuild).
+  m_graph_has_transmission = has_glass && msaa_samples == vk::SampleCountFlagBits::e1;
 
-  // (Re)create the scene render pass at the current MSAA. When transmission is
-  // present it LOADs this depth, so the scene pass must STORE it (not discard).
+  // (Re)create the scene render pass at the current MSAA. The transmission group
+  // LOADs this depth, so the scene pass must STORE it (only when the group exists).
   if (scene_renderpass)
     dev.destroyRenderPass(scene_renderpass);
   scene_renderpass = vkwave::make_scene_renderpass(
@@ -97,18 +99,17 @@ void ScenePipeline::build_scene_graph(SceneData& data)
       | vk::ImageUsageFlagBits::eTransferSrc);
   depth_handle = pool.add_depth("scene_depth", kDepthFormat, msaa_samples);
 
-  // Opt-in (gate at build time, not record time): a transmissive scene needs a
-  // per-slot, sampleable snapshot of the opaque HDR for the refraction pass to
-  // read. Allocate it only when there is glass — otherwise it costs VRAM for
-  // nothing and the DAG is identical to opaque-only. Single-sample, filled via a
-  // copy (eSampled | eTransferDst). Phase 1 is sharp (no mips).
+  // Per-slot sampleable snapshot of the opaque HDR for the refraction pass to
+  // read. Registered for any glass scene (single-sample, filled via copy:
+  // eSampled | eTransferDst). Per-slot so it participates in cross-frame overlap.
   snapshot_handle.reset();
-  if (m_graph_has_transmission)
+  if (has_glass)
   {
     snapshot_handle = pool.add_color("transmission_snapshot", kHdrFormat,
       vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
-    spdlog::info("Scene has transmissive materials — transmission pass enabled");
   }
+  if (m_graph_has_transmission)
+    spdlog::info("Scene has transmissive materials — transmission pass enabled");
 
   // PBR opaque group: renders to the graph-owned HDR target + depth.
   auto pbr_spec = vkwave::PBRPass::pipeline_spec();
@@ -124,19 +125,8 @@ void ScenePipeline::build_scene_graph(SceneData& data)
   pbr_grp.set_descriptor_count(2, 1);
 
   // Transmission group: own pipeline + render pass + submission (Requirement #5).
-  // Renders glass into the SAME HDR target (LOAD), depth-testing against the
-  // shared opaque depth. Compact descriptor layout: set 0 UBO, set 1 material SSBO.
   if (m_graph_has_transmission)
-  {
-    auto tr_spec = vkwave::TransmissionPass::pipeline_spec();
-    tr_spec.existing_renderpass = transmission_renderpass;
-    tr_spec.msaa_samples = vk::SampleCountFlagBits::e1;
-    auto& tr_grp = engine.graph->add_offscreen_group(
-      "transmission", tr_spec, kHdrFormat, kDebug);
-    tr_grp.set_color_attachment(pool, hdr_handle);
-    tr_grp.set_depth_attachment(pool, depth_handle);
-    tr_grp.set_descriptor_count(1, 1);  // singleton material SSBO
-  }
+    add_transmission_group(data);
 
   // Composite present group: samples HDR, tonemaps, writes to swapchain.
   auto comp_spec = vkwave::CompositePass::pipeline_spec();
@@ -386,15 +376,94 @@ void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)
 // MSAA rebuild
 // ---------------------------------------------------------------------------
 
+vkwave::ExecutionGroup& ScenePipeline::add_transmission_group(SceneData& /*data*/)
+{
+  auto& pool = m_engine->graph->resources();
+  auto tr_spec = vkwave::TransmissionPass::pipeline_spec();
+  tr_spec.existing_renderpass = transmission_renderpass;
+  tr_spec.msaa_samples = vk::SampleCountFlagBits::e1;
+  auto& tr_grp = m_engine->graph->add_offscreen_group(
+    "transmission", tr_spec, kHdrFormat, kDebug);
+  tr_grp.set_color_attachment(pool, hdr_handle);   // draws glass into the HDR
+  tr_grp.set_depth_attachment(pool, depth_handle); // depth-test vs opaque depth
+  tr_grp.set_descriptor_count(1, 1);               // singleton material SSBO
+  return tr_grp;
+}
+
 void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
                                      SceneData& data)
 {
-  // Changing MSAA changes the pass set (phase-1 transmission exists only at e1),
-  // so route through the same structural rebuild as a model switch. A bespoke
-  // incremental MSAA path that also rebuilds the transmission group is a later
-  // task. The caller re-wires record callbacks afterwards (groups are new).
+  // INCREMENTAL path (must NOT route through the structural rebuild_graph — that
+  // frees+reallocates every resource and 2x-peaks GPU memory, OOMing at
+  // 8x/fullscreen). Replace only the pbr group + depth; keep HDR/composite/
+  // semaphores. The transmission group is e1-only, so add/remove just that group.
   msaa_samples = new_samples;
-  rebuild_graph(data);
+  auto& graph = *m_engine->graph;
+  auto& pool = graph.resources();
+  const uint32_t os_depth = graph.offscreen_depth();
+  const bool want_group =
+    data.has_transmission() && msaa_samples == vk::SampleCountFlagBits::e1;
+
+  // 1. Drop the transmission group BEFORE the depth becomes multisample (it is
+  //    single-sample and shares that depth).
+  if (m_graph_has_transmission && !want_group)
+  {
+    graph.remove_last_offscreen_group();
+    m_graph_has_transmission = false;
+  }
+
+  // 2. Rebuild the pbr group at the new sample count (the proven incremental
+  //    path). storeDepth only when the transmission group will consume it.
+  auto& old_pbr = pbr_group();
+  const auto extent = old_pbr.extent();
+  old_pbr.destroy_frame_resources();
+
+  auto dev = m_engine->device->device();
+  if (scene_renderpass)
+    dev.destroyRenderPass(scene_renderpass);
+  scene_renderpass = vkwave::make_scene_renderpass(
+    dev, kHdrFormat, kDepthFormat, kDebug, msaa_samples, want_group);
+
+  auto pbr_spec = vkwave::PBRPass::pipeline_spec();
+  pbr_spec.existing_renderpass = scene_renderpass;
+  pbr_spec.msaa_samples = msaa_samples;
+  auto& new_pbr = graph.replace_offscreen_group(0, "pbr", pbr_spec, kHdrFormat, kDebug);
+  new_pbr.set_color_attachment(pool, hdr_handle);
+
+  // Depth must match the new MSAA: update + re-allocate the pool (the snapshot
+  // stays single-sample; only the depth sample count changes).
+  pool.set_depth_samples(depth_handle, msaa_samples);
+  pool.recreate(*m_engine->device);
+  new_pbr.set_depth_attachment(pool, depth_handle);
+  new_pbr.set_descriptor_count(1, data.material_count());
+  new_pbr.set_descriptor_count(2, 1);
+  new_pbr.create_frame_resources(extent, os_depth);
+
+  // 3. Re-add the transmission group now that depth is single-sample again.
+  if (want_group && !m_graph_has_transmission)
+  {
+    auto& tr_grp = add_transmission_group(data);
+    tr_grp.create_frame_resources(extent, os_depth);
+    m_graph_has_transmission = true;
+  }
+
+  // 4. Re-wire the HDR descriptor + dependency DAG (the pool re-alloc gave fresh
+  //    views; replace_offscreen_group made a new pbr group, dangling old edges).
+  auto& comp = composite_group();
+  comp.write_image_descriptor(0, "hdrImage", pool.color_view(hdr_handle, 0), hdr_sampler);
+  comp.clear_dependencies();
+  if (auto* tr = transmission_group())
+  {
+    tr->clear_dependencies();
+    tr->depends_on(new_pbr);
+    comp.depends_on(*tr);
+  }
+  else
+  {
+    comp.depends_on(new_pbr);
+  }
+
+  write_pbr_descriptors(data);
   spdlog::info("MSAA changed to {}x", static_cast<int>(msaa_samples));
 }
 

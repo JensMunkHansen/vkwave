@@ -134,8 +134,9 @@ void Scene::wire_record_callbacks()
   pipeline->pbr_group().set_post_record_fn(
     [this, record_screenshot, has_transmission](vk::CommandBuffer cmd, uint32_t /*slot_index*/) {
       // Transmission snapshot: copy the opaque HDR into the per-slot snapshot the
-      // refraction pass samples. Only present for transmissive scenes.
-      if (pipeline->snapshot_handle)
+      // refraction pass samples. Only when the transmission group is present to
+      // consume it (the snapshot resource may exist at MSAA with no group).
+      if (pipeline->transmission_group() && pipeline->snapshot_handle)
       {
         auto slot = m_engine->graph->last_offscreen_slot();
         auto& pool = m_engine->graph->resources();

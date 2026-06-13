@@ -85,6 +85,11 @@ private:
   /// constructor and rebuild_graph(). Assumes the graph is in its pre-add state.
   void build_scene_graph(SceneData& data);
 
+  /// Add + configure the transmission offscreen group (color=HDR, depth=shared,
+  /// material SSBO descriptor count). Returns the group. Pool resources must
+  /// already be registered. Shared by build_scene_graph() and rebuild_for_msaa().
+  vkwave::ExecutionGroup& add_transmission_group(SceneData& data);
+
   // Immutable per-material constants (GpuMaterial[]), shared across all frames.
   // Built once per model load; only the descriptor is rewritten on rebuild.
   std::unique_ptr<vkwave::Buffer> material_buffer;

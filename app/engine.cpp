@@ -30,6 +30,10 @@ Engine::Engine(const AppConfig& cfg)
   swapchain.emplace(*device, surface->get(), window.width(), window.height(), false,
     parse_present_mode(cfg.present_mode), cfg.swapchain_images);
   graph.emplace(*device);
+  // Limit offscreen frames-in-flight (per-slot resource copies) when requested —
+  // the main lever on GPU memory at high MSAA/resolution. 0 = use swapchain count.
+  if (cfg.frames_in_flight > 0)
+    graph->set_offscreen_depth(cfg.frames_in_flight);
 }
 
 Engine::~Engine()

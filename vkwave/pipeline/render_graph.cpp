@@ -180,6 +180,18 @@ void RenderGraph::resize(const Swapchain& swapchain)
   build(swapchain);
 }
 
+void RenderGraph::remove_last_offscreen_group()
+{
+  if (m_offscreen_groups.empty())
+    return;
+  drain();
+  m_offscreen_groups.back()->destroy_frame_resources();
+  m_offscreen_groups.pop_back();
+  // Size now mismatches m_submit_order, so render_frame falls back to identity
+  // (insertion) order — which still respects the pbr->transmission edge.
+  m_submit_order.clear();
+}
+
 void RenderGraph::reset_structure()
 {
   drain();
