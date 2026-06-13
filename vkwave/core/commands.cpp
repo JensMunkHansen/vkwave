@@ -94,4 +94,38 @@ vk::CommandBuffer make_command_buffers(const Device& device, const Swapchain& sw
   return nullptr;
 }
 
+void submit_one_shot(const Device& device,
+                     const std::function<void(vk::CommandBuffer)>& record)
+{
+  const vk::Device dev = device.device();
+
+  vk::CommandPoolCreateInfo pool_info{};
+  pool_info.queueFamilyIndex = device.m_graphics_queue_family_index;
+  pool_info.flags = vk::CommandPoolCreateFlagBits::eTransient;
+  vk::CommandPool pool = dev.createCommandPool(pool_info);
+
+  vk::CommandBufferAllocateInfo alloc_info{};
+  alloc_info.commandPool = pool;
+  alloc_info.level = vk::CommandBufferLevel::ePrimary;
+  alloc_info.commandBufferCount = 1;
+  vk::CommandBuffer cmd = dev.allocateCommandBuffers(alloc_info)[0];
+
+  vk::CommandBufferBeginInfo begin_info{};
+  begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+  cmd.begin(begin_info);
+
+  record(cmd);
+
+  cmd.end();
+
+  vk::SubmitInfo submit_info{};
+  submit_info.commandBufferCount = 1;
+  submit_info.pCommandBuffers = &cmd;
+  device.graphics_queue().submit(submit_info, nullptr);
+  device.graphics_queue().waitIdle();
+
+  dev.freeCommandBuffers(pool, cmd);
+  dev.destroyCommandPool(pool);
+}
+
 }

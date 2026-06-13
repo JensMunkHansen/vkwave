@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.hpp>
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>

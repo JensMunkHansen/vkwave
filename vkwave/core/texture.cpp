@@ -3,6 +3,7 @@
 
 #include <vkwave/core/texture.h>
 #include <vkwave/core/buffer.h>
+#include <vkwave/core/commands.h>
 #include <vkwave/core/device.h>
 
 #include <spdlog/spdlog.h>
@@ -274,7 +275,6 @@ void Texture::transition_layout(
 
 void Texture::upload_pixels(const uint8_t* pixels)
 {
-  auto dev = m_device->device();
   vk::DeviceSize image_size = m_width * m_height * 4; // RGBA
 
   // Create staging buffer
@@ -284,59 +284,26 @@ void Texture::upload_pixels(const uint8_t* pixels)
 
   staging.update(pixels, image_size);
 
-  // Create command buffer for transfer
-  vk::CommandPoolCreateInfo pool_info{};
-  pool_info.queueFamilyIndex = m_device->m_graphics_queue_family_index;
-  pool_info.flags = vk::CommandPoolCreateFlagBits::eTransient;
+  // One-shot upload: transition -> copy staging into the image -> transition.
+  submit_one_shot(*m_device, [&](vk::CommandBuffer cmd) {
+    transition_layout(cmd, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
 
-  vk::CommandPool cmd_pool = dev.createCommandPool(pool_info);
+    vk::BufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = vk::Offset3D{ 0, 0, 0 };
+    region.imageExtent = vk::Extent3D{ m_width, m_height, 1 };
 
-  vk::CommandBufferAllocateInfo alloc_info{};
-  alloc_info.commandPool = cmd_pool;
-  alloc_info.level = vk::CommandBufferLevel::ePrimary;
-  alloc_info.commandBufferCount = 1;
+    cmd.copyBufferToImage(staging.buffer(), m_image, vk::ImageLayout::eTransferDstOptimal, region);
 
-  auto cmd_buffers = dev.allocateCommandBuffers(alloc_info);
-  vk::CommandBuffer cmd = cmd_buffers[0];
-
-  vk::CommandBufferBeginInfo begin_info{};
-  begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-  cmd.begin(begin_info);
-
-  // Transition to transfer destination
-  transition_layout(cmd, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-
-  // Copy buffer to image
-  vk::BufferImageCopy region{};
-  region.bufferOffset = 0;
-  region.bufferRowLength = 0;
-  region.bufferImageHeight = 0;
-  region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-  region.imageSubresource.mipLevel = 0;
-  region.imageSubresource.baseArrayLayer = 0;
-  region.imageSubresource.layerCount = 1;
-  region.imageOffset = vk::Offset3D{ 0, 0, 0 };
-  region.imageExtent = vk::Extent3D{ m_width, m_height, 1 };
-
-  cmd.copyBufferToImage(staging.buffer(), m_image, vk::ImageLayout::eTransferDstOptimal, region);
-
-  // Transition to shader read
-  transition_layout(
-    cmd, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-
-  cmd.end();
-
-  // Submit and wait
-  vk::SubmitInfo submit_info{};
-  submit_info.commandBufferCount = 1;
-  submit_info.pCommandBuffers = &cmd;
-
-  m_device->graphics_queue().submit(submit_info, nullptr);
-  m_device->graphics_queue().waitIdle();
-
-  // Cleanup
-  dev.freeCommandBuffers(cmd_pool, cmd);
-  dev.destroyCommandPool(cmd_pool);
+    transition_layout(
+      cmd, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+  });
 }
 
 } // namespace vkwave
