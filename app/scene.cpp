@@ -422,6 +422,11 @@ void Scene::draw_ui(Engine& app, double avg_fps)
   ImGui::Checkbox("Emissive", &pbr_ctx.enable_emissive);
   ImGui::Checkbox("Clear Coat", &pbr_ctx.enable_clearcoat);
 
+  // Mipmapping A/B: off forces mip 0 via a large negative LOD bias.
+  static bool mipmaps_on = true;
+  if (ImGui::Checkbox("Mipmaps", &mipmaps_on))
+    pbr_ctx.mip_bias = mipmaps_on ? 0.0f : -16.0f;
+
   // Global clear-coat override (non-glTF): force a coat onto every material so
   // the effect can be previewed on assets that don't author KHR_materials_clearcoat.
   static bool cc_override = false;

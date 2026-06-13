@@ -184,3 +184,10 @@ infrastructure (`commands.h::submit_one_shot`).
   does, via the `Image` constructor). With lazily-allocated memory this avoids
   backing store; a minor bandwidth/memory win, mostly on tile-based GPUs.
   `DepthStencilAttachment` currently always uses `eDepthStencilAttachment` only.
+
+- **Asset loading is synchronous and blocks the main thread.** Each texture
+  uploads via its own `submit_one_shot` → `waitIdle` round-trip (now plus a
+  blit-chain for mips), so a texture-heavy model (e.g. ABeautifulGame) freezes
+  the window during load ("application not responding"). Fixes: batch all
+  uploads into one command buffer / submission, and/or load on a worker thread.
+  A natural place to reuse the F4 mip-generation and the compute queue (F2).

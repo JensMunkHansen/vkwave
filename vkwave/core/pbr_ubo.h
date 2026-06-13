@@ -107,10 +107,11 @@ struct PbrPushConstants
   float clearcoatRoughnessOverride;  //  4 bytes
   float anisotropyOverride;          //  4 bytes — < 0 = use material
   float anisotropyRotationOverride;  //  4 bytes
-};                                   // 104 bytes total
+  float mipBias;                     //  4 bytes — texture LOD bias (0 = mipmapped; large negative forces mip 0)
+};                                   // 108 bytes total
 
-static_assert(sizeof(PbrPushConstants) == 104,
-  "PbrPushConstants must be 104 bytes to match shader layout");
+static_assert(sizeof(PbrPushConstants) == 108,
+  "PbrPushConstants must be 108 bytes to match shader layout");
 static_assert(sizeof(PbrPushConstants) <= 128,
   "Push constants must fit in 128 bytes (guaranteed minimum)");
 

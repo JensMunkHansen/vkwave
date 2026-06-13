@@ -89,6 +89,8 @@ set(_GLB_MODELS
   CompareAnisotropy  # KHR_materials_anisotropy A/B (with vs without)
   AnisotropyDiscTest # KHR_materials_anisotropy texture-driven direction
   CarConcept         # multi-extension concept car (clearcoat, anisotropy, etc.)
+  ABeautifulGame     # chess set on a flat board — texture mip / minification demo
+  TextureCoordinateTest # flat UV-grid plane — canonical minification-aliasing demo
 )
 
 foreach(_model IN LISTS _GLB_MODELS)

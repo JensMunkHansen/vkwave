@@ -8,6 +8,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace vkwave
@@ -158,18 +160,24 @@ void Texture::create_image()
 {
   auto dev = m_device->device();
 
+  // Full mip chain: floor(log2(max(w,h))) + 1 levels.
+  m_mip_levels = static_cast<uint32_t>(
+    std::floor(std::log2(std::max(m_width, m_height)))) + 1;
+
   // Create image
   vk::ImageCreateInfo image_info{};
   image_info.imageType = vk::ImageType::e2D;
   image_info.extent.width = m_width;
   image_info.extent.height = m_height;
   image_info.extent.depth = 1;
-  image_info.mipLevels = 1;
+  image_info.mipLevels = m_mip_levels;
   image_info.arrayLayers = 1;
   image_info.format = m_format;
   image_info.tiling = vk::ImageTiling::eOptimal;
   image_info.initialLayout = vk::ImageLayout::eUndefined;
-  image_info.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+  // eTransferSrc is needed to blit each level into the next when generating mips.
+  image_info.usage = vk::ImageUsageFlagBits::eTransferDst
+    | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eSampled;
   image_info.sharingMode = vk::SharingMode::eExclusive;
   image_info.samples = vk::SampleCountFlagBits::e1;
 
@@ -199,7 +207,7 @@ void Texture::create_image_view()
   view_info.format = m_format;
   view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
   view_info.subresourceRange.baseMipLevel = 0;
-  view_info.subresourceRange.levelCount = 1;
+  view_info.subresourceRange.levelCount = m_mip_levels;
   view_info.subresourceRange.baseArrayLayer = 0;
   view_info.subresourceRange.layerCount = 1;
 
@@ -223,7 +231,7 @@ void Texture::create_sampler()
   sampler_info.mipmapMode = vk::SamplerMipmapMode::eLinear;
   sampler_info.mipLodBias = 0.0f;
   sampler_info.minLod = 0.0f;
-  sampler_info.maxLod = 0.0f;
+  sampler_info.maxLod = static_cast<float>(m_mip_levels); // trilinear across all mips
 
   m_sampler = m_device->device().createSampler(sampler_info);
 
@@ -242,7 +250,7 @@ void Texture::transition_layout(
   barrier.image = m_image;
   barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
   barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.levelCount = m_mip_levels;
   barrier.subresourceRange.baseArrayLayer = 0;
   barrier.subresourceRange.layerCount = 1;
 
@@ -301,9 +309,78 @@ void Texture::upload_pixels(const uint8_t* pixels)
 
     cmd.copyBufferToImage(staging.buffer(), m_image, vk::ImageLayout::eTransferDstOptimal, region);
 
-    transition_layout(
-      cmd, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    generate_mipmaps(cmd);
   });
+}
+
+void Texture::generate_mipmaps(vk::CommandBuffer cmd)
+{
+  // Standard vkCmdBlitImage down-sample chain: each level i is filled by a
+  // linear-filtered blit from level i-1, transitioning levels through
+  // TransferSrc and finally to ShaderReadOnly. (For a 1x1 texture the loop is
+  // skipped and only the final transition runs.)
+  vk::ImageMemoryBarrier barrier{};
+  barrier.image = m_image;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.subresourceRange.levelCount = 1;
+
+  int32_t mip_w = static_cast<int32_t>(m_width);
+  int32_t mip_h = static_cast<int32_t>(m_height);
+
+  for (uint32_t i = 1; i < m_mip_levels; ++i)
+  {
+    // level i-1: TransferDst -> TransferSrc (it becomes the blit source)
+    barrier.subresourceRange.baseMipLevel = i - 1;
+    barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+    barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+    barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+      vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, barrier);
+
+    const int32_t next_w = mip_w > 1 ? mip_w / 2 : 1;
+    const int32_t next_h = mip_h > 1 ? mip_h / 2 : 1;
+
+    vk::ImageBlit blit{};
+    blit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+    blit.srcOffsets[1] = vk::Offset3D{ mip_w, mip_h, 1 };
+    blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    blit.srcSubresource.mipLevel = i - 1;
+    blit.srcSubresource.baseArrayLayer = 0;
+    blit.srcSubresource.layerCount = 1;
+    blit.dstOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+    blit.dstOffsets[1] = vk::Offset3D{ next_w, next_h, 1 };
+    blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    blit.dstSubresource.mipLevel = i;
+    blit.dstSubresource.baseArrayLayer = 0;
+    blit.dstSubresource.layerCount = 1;
+    cmd.blitImage(m_image, vk::ImageLayout::eTransferSrcOptimal,
+      m_image, vk::ImageLayout::eTransferDstOptimal, blit, vk::Filter::eLinear);
+
+    // level i-1: TransferSrc -> ShaderReadOnly (done being read)
+    barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+    barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+    barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+      vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
+
+    mip_w = next_w;
+    mip_h = next_h;
+  }
+
+  // Last level is still TransferDst -> ShaderReadOnly.
+  barrier.subresourceRange.baseMipLevel = m_mip_levels - 1;
+  barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+  barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+  barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+  cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+    vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
 }
 
 } // namespace vkwave

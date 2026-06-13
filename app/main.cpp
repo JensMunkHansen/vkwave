@@ -162,6 +162,9 @@ int main(int argc, char** argv)
   if (app.config.debug_mode >= 0)
     scene.pbr_ctx.debug_mode = app.config.debug_mode;
 
+  // Optional texture LOD bias (for headless mipmapping A/B captures)
+  scene.pbr_ctx.mip_bias = app.config.mip_bias;
+
   // Fit camera to loaded model bounds
   if (scene.data.gltf_scene.bounds.valid())
   {
@@ -180,6 +183,18 @@ int main(int argc, char** argv)
     scene.data.camera.azimuth(app.config.cam_azimuth);
   if (app.config.cam_elevation != 0.0f)
     scene.data.camera.elevation(app.config.cam_elevation);
+  if (app.config.cam_dolly != 1.0f)
+  {
+    scene.data.camera.dolly(app.config.cam_dolly);
+    // Dolly moved the camera; refresh the clipping range or the model can fall
+    // outside the near/far planes that were set for the original distance.
+    if (scene.data.gltf_scene.bounds.valid())
+    {
+      float bounds[6];
+      scene.data.gltf_scene.bounds.to_bounds(bounds);
+      scene.data.camera.reset_clipping_range(bounds);
+    }
+  }
 
   scene.data.camera.set_aspect_ratio(
     static_cast<float>(app.swapchain->extent().width) /

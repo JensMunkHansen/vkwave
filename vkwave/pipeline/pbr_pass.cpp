@@ -40,6 +40,7 @@ static PbrPushConstants fill_push_constants(
   pc.clearcoatRoughnessOverride  = ctx.clearcoat_roughness_override;
   pc.anisotropyOverride          = ctx.anisotropy_override;
   pc.anisotropyRotationOverride  = ctx.anisotropy_rotation_override;
+  pc.mipBias                     = ctx.mip_bias;
   return pc;
 }
 
