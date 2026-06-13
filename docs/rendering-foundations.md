@@ -83,13 +83,84 @@ environment, then swap) — a separate, optional feature, not part of F2.
 
 ## F3 — Graph-owned, ring-buffered shared resources
 
-Each `ExecutionGroup` currently owns its own depth buffer, and the HDR images
-are owned ad-hoc by the application. For multiple passes to share a depth
-buffer (e.g. opaque + transmission depth-testing the same buffer) and for the
-graph to ring-buffer everything per slot, the depth buffer (and a unified
-HDR + snapshot pool) should become graph-owned, per-slot resources that passes
-reference by `frame_index`. This is the "Graph Owns All Vulkan Resources"
-requirement made real.
+This is the broad foundation: it moves resource *ownership*, not just adds a
+capability. Today ownership is split across three layers and the app/graph seam
+is tangled:
+
+- `ExecutionGroup` owns **its own depth buffer** (`m_depth_buffer`) — so two
+  passes cannot share one depth buffer.
+- `ScenePipeline` (the app's scene manager) owns **GPU resources** the graph's
+  passes consume: the HDR images, the HDR sampler, and the scene/composite
+  render passes, which it hands to groups via `set_color_views()` and
+  `existing_renderpass`.
+
+Requirement #3 ("Graph Owns All Vulkan Resources") wants the ring-buffered GPU
+resources owned by the graph, with passes *referencing* them — and the scene
+manager reduced to a pure orchestrator (it describes passes + dependencies +
+per-frame data, and owns no `VkImage`/`VkRenderPass`).
+
+### Design: a graph-owned `FrameResourcePool`
+
+A new class owned by `RenderGraph`, holding **ring-buffered** image resources
+(one copy per slot), keyed by an opaque handle:
+
+```cpp
+class FrameResourcePool {
+  // Register a per-slot image resource (declared once, at setup).
+  ImageHandle add_image(std::string name, vk::Format, vk::ImageUsageFlags,
+                        uint32_t mip_levels = 1);
+
+  // Resolve per-slot views/handles (valid after create()).
+  vk::ImageView view(ImageHandle, uint32_t slot, uint32_t mip = 0) const;
+  vk::Image     image(ImageHandle, uint32_t slot) const;
+
+  // Lifecycle, driven by RenderGraph::build()/resize().
+  void create(vk::Extent2D, uint32_t count);
+  void destroy();
+};
+```
+
+- The scene manager **registers** what it needs at setup (an HDR color target;
+  a depth target; later, the transmission snapshot) and keeps only the handles.
+- `RenderGraph` (re)creates the pool at the current extent on `build()` /
+  `resize()` — one place, replacing the app's `create_hdr_images` +
+  `set_resize_fn` dance.
+- Passes/groups are configured with pool **handles** instead of raw views or a
+  self-owned depth: `group.set_color_attachment(handle)`,
+  `group.set_depth_attachment(handle)`. At framebuffer-assembly time the group
+  resolves `handle → view(slot)` from the pool.
+
+Sharing falls out naturally: opaque and transmission groups reference the
+**same** depth handle, so they depth-test the same buffer.
+
+### Migration order (each phase leaves a working build)
+
+1. **Scaffold.** Introduce `FrameResourcePool`, owned by `RenderGraph`, wired
+   into `build()`/`resize()`. Unused at first — no behavior change.
+2. **HDR color → pool.** Register the HDR target in the pool; the pbr group
+   takes it as its color attachment; composite samples it. Delete
+   `ScenePipeline::hdr_images` and the bespoke resize callback. (Lower risk —
+   the HDR images are already a per-slot vector; this establishes the pattern.)
+3. **Depth → pool.** `ExecutionGroup` stops owning `m_depth_buffer`; depth is a
+   pool resource; framebuffers resolve the depth view from the pool. This is
+   the structural change that unblocks shared depth (and thus glass).
+4. **(Optional, scope decision) Render passes → graph.** Have the graph derive
+   render passes from attachment formats/MSAA instead of the app creating and
+   sharing them. Completes req #3 but is not required for glass; can be a
+   follow-up.
+
+### End state
+
+A clean seam: `Device` (queues) ← `RenderGraph` (**all** ring-buffered GPU
+resources + ordering) ← scene manager (description + per-frame data). Adding a
+new pass — transmission, SSS blur — becomes "register any resources it needs,
+declare the pass + its `depends_on` edges, provide a record callback," with no
+new app-owned GPU state.
+
+**Scope (decided):** F3 lands **steps 1–3**. Render-pass ownership (step 4) is
+a separate follow-up — render passes stay app-created and shared via
+`existing_renderpass`. Steps 1–3 already deliver everything glass needs
+(graph-owned, shareable depth + HDR, with the snapshot as a future sibling).
 
 ---
 
