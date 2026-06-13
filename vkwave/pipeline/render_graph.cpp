@@ -24,7 +24,14 @@ std::vector<SemaphoreWait> dependency_waits(const SubmissionGroup& group)
   {
     const uint64_t value = dep->latest_signal_value();
     if (value > 0)
-      waits.push_back({ dep->timeline_semaphore(), value });
+      // A pass may consume its predecessor's output at any stage (e.g. the
+      // composite samples the HDR target in the fragment shader). Gate the wait
+      // at all commands so no consumer stage runs before the producer finishes
+      // — a color-output-only wait would let an earlier stage (the fragment
+      // sample) read a still-being-written resource. Cross-frame overlap is
+      // unaffected (different frames use different per-slot resources).
+      waits.push_back({ dep->timeline_semaphore(), value,
+        vk::PipelineStageFlagBits::eAllCommands });
   }
   return waits;
 }
@@ -257,7 +264,8 @@ bool RenderGraph::render_frame(const Swapchain& swapchain)
       auto& last_offscreen = *m_offscreen_groups.back();
       auto tl_value = last_offscreen.latest_signal_value();
       if (tl_value > 0)
-        present_waits.push_back({ last_offscreen.timeline_semaphore(), tl_value });
+        present_waits.push_back({ last_offscreen.timeline_semaphore(), tl_value,
+          vk::PipelineStageFlagBits::eAllCommands });
     }
 
     m_present_group->begin_frame(image_index, true);
