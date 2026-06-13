@@ -1,4 +1,5 @@
 #include <vkwave/core/buffer.h>
+#include <vkwave/core/commands.h>
 #include <vkwave/core/device.h>
 
 #include <spdlog/spdlog.h>
@@ -202,40 +203,12 @@ std::unique_ptr<Buffer> Buffer::create_device_local(
     usage | vk::BufferUsageFlagBits::eTransferDst,
     vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-  // One-shot command buffer for the copy
-  auto dev = device.device();
-
-  vk::CommandPoolCreateInfo pool_info{};
-  pool_info.queueFamilyIndex = device.m_graphics_queue_family_index;
-  pool_info.flags = vk::CommandPoolCreateFlagBits::eTransient;
-  vk::CommandPool cmd_pool = dev.createCommandPool(pool_info);
-
-  vk::CommandBufferAllocateInfo alloc_info{};
-  alloc_info.commandPool = cmd_pool;
-  alloc_info.level = vk::CommandBufferLevel::ePrimary;
-  alloc_info.commandBufferCount = 1;
-
-  auto cmd = dev.allocateCommandBuffers(alloc_info)[0];
-
-  vk::CommandBufferBeginInfo begin_info{};
-  begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-  cmd.begin(begin_info);
-
-  vk::BufferCopy copy_region{};
-  copy_region.size = size;
-  cmd.copyBuffer(staging.buffer(), buffer->buffer(), copy_region);
-
-  cmd.end();
-
-  vk::SubmitInfo submit_info{};
-  submit_info.commandBufferCount = 1;
-  submit_info.pCommandBuffers = &cmd;
-
-  device.graphics_queue().submit(submit_info, nullptr);
-  device.graphics_queue().waitIdle();
-
-  dev.freeCommandBuffers(cmd_pool, cmd);
-  dev.destroyCommandPool(cmd_pool);
+  // One-shot copy: staging -> device-local
+  submit_one_shot(device, [&](vk::CommandBuffer cmd) {
+    vk::BufferCopy copy_region{};
+    copy_region.size = size;
+    cmd.copyBuffer(staging.buffer(), buffer->buffer(), copy_region);
+  });
 
   return buffer;
 }
