@@ -10,6 +10,9 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <vkwave/core/exception.h>
 #include <vkwave/core/instance.h>
 #include <vkwave/core/representation.h>
+#include <algorithm>
+#include <array>
+#include <string>
 #include <utility>
 #include <vulkan/vulkan_structs.hpp>
 
@@ -275,6 +278,27 @@ void Instance::init()
   instanceCreateInfo.setEnabledLayerCount(static_cast<std::uint32_t>(enabled_instance_layers.size()));
   instanceCreateInfo.setEnabledExtensionCount(
     static_cast<std::uint32_t>(enabled_instance_extensions.size()));
+
+  // Synchronization validation — a *feature* of VK_LAYER_KHRONOS_validation,
+  // not on by default. Standard validation checks API/state correctness but not
+  // GPU execution/memory hazards (RAW/WAR/WAW); this enables the layer to track
+  // them and flag a missing or too-narrow barrier (it would have caught the
+  // pbr->composite wait-stage bug). Only meaningful when the validation layer is
+  // actually enabled, so gate on that. Must outlive createInstance() (pNext).
+  const std::array enabled_validation_features{
+    vk::ValidationFeatureEnableEXT::eSynchronizationValidation};
+  vk::ValidationFeaturesEXT validation_features;
+  const bool validation_layer_enabled =
+    std::find_if(enabled_instance_layers.begin(), enabled_instance_layers.end(),
+      [](const char* l) {
+        return std::string("VK_LAYER_KHRONOS_validation") == l;
+      }) != enabled_instance_layers.end();
+  if (validation_layer_enabled)
+  {
+    spdlog::trace("   - synchronization validation feature");
+    validation_features.setEnabledValidationFeatures(enabled_validation_features);
+    instanceCreateInfo.setPNext(&validation_features);
+  }
 
   if (const vk::Result result = vk::createInstance(&instanceCreateInfo, nullptr, &m_instance);
       result != vk::Result::eSuccess)

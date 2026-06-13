@@ -36,13 +36,11 @@ add_library(build INTERFACE)
 include(spsCompilerPlatformFlags)
 
 option(VKWAVE_FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." TRUE)
-option(VKWAVE_DEBUG "Enable debug logging and validation" OFF)
-
-# Auto-enable debug for Debug builds
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_CONFIGURATION_TYPES)
-  set(VKWAVE_DEBUG ON)
-endif()
-set(VKWAVE_DEBUG OFF)
+# VKWAVE_DEBUG (validation layers + debug messenger + debug logging) is wired as
+# a per-config compile definition in vkwave/CMakeLists.txt
+# ($<$<CONFIG:Debug>:VKWAVE_DEBUG>) so it is correct under the Ninja Multi-Config
+# generator: on for the Debug config, off for Release. Do not set it as a plain
+# CMake variable here — config.h is generated once and cannot vary per-config.
 
 if(VKWAVE_FORCE_COLORED_OUTPUT)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

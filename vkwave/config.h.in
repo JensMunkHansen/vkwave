@@ -7,4 +7,7 @@
 
 #define SHADER_DIR "@CMAKE_CURRENT_SOURCE_DIR@/shaders/"
 
-#cmakedefine VKWAVE_DEBUG
+// VKWAVE_DEBUG is NOT defined here: with a multi-config generator config.h is
+// generated once and shared across configs, so it cannot vary per-config. It is
+// instead a per-config compile definition ($<$<CONFIG:Debug>:VKWAVE_DEBUG>) in
+// vkwave/CMakeLists.txt — defined for Debug, undefined for Release.

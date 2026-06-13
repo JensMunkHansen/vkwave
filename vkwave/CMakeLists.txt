@@ -107,6 +107,13 @@ target_link_libraries(${TARGET_NAME}
 target_compile_definitions(${TARGET_NAME}
   PUBLIC VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
   PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE
+  # VKWAVE_DEBUG (validation layers + debug messenger + debug logging) must be
+  # per-config: with the Ninja Multi-Config generator, config.h is generated once
+  # at configure time and shared by every config, so a #cmakedefine cannot vary
+  # Debug vs Release. A generator expression is the only correct mechanism — it
+  # defines the macro only in the Debug config, keeping Release validation-free.
+  # PUBLIC so app/test TUs (which also use #ifdef VKWAVE_DEBUG / kDebug) see it.
+  PUBLIC $<$<CONFIG:Debug>:VKWAVE_DEBUG>
 )
 
 # Optional RenderDoc programmatic capture API (header-only, runtime-loaded).
