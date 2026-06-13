@@ -414,6 +414,46 @@ Device::Device(const Instance& inst, vk::SurfaceKHR surface, bool prefer_distinc
     m_transfer_queue_family_index = m_graphics_queue_family_index;
   }
 
+  // Async compute queue: prefer a dedicated compute family (COMPUTE without
+  // GRAPHICS) so compute can run truly in parallel with graphics. Otherwise
+  // reuse the graphics queue — the spec guarantees graphics-capable families
+  // also support compute.
+  auto compute_candidate = find_queue_family_index_if(
+    [&](const std::uint32_t /*index*/, const vk::QueueFamilyProperties& queue_family)
+    {
+      return (queue_family.queueFlags & vk::QueueFlagBits::eCompute) &&
+        ((queue_family.queueFlags & vk::QueueFlagBits::eGraphics) == (vk::QueueFlagBits)0);
+    });
+
+  if (compute_candidate)
+  {
+    m_compute_queue_family_index = *compute_candidate;
+    m_has_dedicated_compute_queue = true;
+
+    // Don't request a duplicate queue if the compute family coincides with one
+    // already requested (e.g. a combined compute+transfer family).
+    bool already_requested = false;
+    for (const auto& qci : queues_to_create)
+      if (qci.queueFamilyIndex == m_compute_queue_family_index)
+      {
+        already_requested = true;
+        break;
+      }
+
+    if (!already_requested)
+      queues_to_create.push_back(vk::DeviceQueueCreateInfo(vk::DeviceQueueCreateFlags(),
+        m_compute_queue_family_index, 1, &vkwave::DEFAULT_QUEUE_PRIORITY));
+
+    spdlog::info("Using a dedicated async compute queue (family {})",
+      m_compute_queue_family_index);
+  }
+  else
+  {
+    m_compute_queue_family_index = m_graphics_queue_family_index;
+    m_has_dedicated_compute_queue = false;
+    spdlog::info("No dedicated compute queue available; compute shares the graphics queue");
+  }
+
   // TODO(Use C++)
 
   //  VkPhysicalDeviceFeatures available_features{};
@@ -556,6 +596,12 @@ Device::Device(const Instance& inst, vk::SurfaceKHR surface, bool prefer_distinc
   // Since we only have one queue per queue family, we acquire index 0.
   m_present_queue = m_device.getQueue(m_present_queue_family_index, 0);
   m_graphics_queue = m_device.getQueue(m_graphics_queue_family_index, 0);
+
+  // Compute queue: a distinct handle only when a dedicated family was found;
+  // otherwise it aliases the graphics queue.
+  m_compute_queue = m_has_dedicated_compute_queue
+    ? m_device.getQueue(m_compute_queue_family_index, 0)
+    : m_graphics_queue;
 }
 
 RayTracingCapabilities Device::query_ray_tracing_capabilities(vk::PhysicalDevice physical_device)

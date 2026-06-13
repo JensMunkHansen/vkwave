@@ -110,6 +110,18 @@ public:
 
   [[nodiscard]] vk::Queue transfer_queue() const { return m_transfer_queue; }
 
+  /// Compute queue. A dedicated async-compute queue when the GPU exposes a
+  /// compute-capable family without graphics; otherwise the graphics queue
+  /// (the spec guarantees graphics families also support compute).
+  [[nodiscard]] vk::Queue compute_queue() const { return m_compute_queue; }
+
+  /// True when compute_queue() is a distinct family from the graphics queue,
+  /// i.e. compute work can run truly in parallel with graphics.
+  [[nodiscard]] bool has_dedicated_compute_queue() const
+  {
+    return m_has_dedicated_compute_queue;
+  }
+
   void wait_idle() const;
 
   vk::SurfaceCapabilitiesKHR surfaceCapabilities(const vk::SurfaceKHR& surface) const;
@@ -166,12 +178,15 @@ private:
   vk::Queue m_graphics_queue{ VK_NULL_HANDLE };
   vk::Queue m_present_queue{ VK_NULL_HANDLE };
   vk::Queue m_transfer_queue{ VK_NULL_HANDLE };
+  vk::Queue m_compute_queue{ VK_NULL_HANDLE };
+  bool m_has_dedicated_compute_queue{ false };
 
 public:
   // Find other way to expose to swapchain
   std::uint32_t m_present_queue_family_index{ 0 };
   std::uint32_t m_graphics_queue_family_index{ 0 };
   std::uint32_t m_transfer_queue_family_index{ 0 };
+  std::uint32_t m_compute_queue_family_index{ 0 };
 
 private:
   mutable std::vector<std::unique_ptr<vk::CommandPool>> m_cmd_pools;

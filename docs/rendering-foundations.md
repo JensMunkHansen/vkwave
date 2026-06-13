@@ -12,7 +12,7 @@ Each foundation maps to a core requirement in `CLAUDE.md`:
 |---|------------|-------------|--------|
 | F1 | Explicit pass-dependency DAG | #2 Semaphore DAG for pass ordering | **Merged** (PR #4) |
 | —  | One-shot command unification | (tidy-up) | **Merged** (PR #5) |
-| F2 | Async compute queue | #6 Async compute | In progress |
+| F2 | Async compute queue | #6 Async compute | **This branch** |
 | F3 | Graph-owned, ring-buffered resources | #3 Graph owns all Vulkan resources | Planned |
 | F4 | `Image` mips + compute downsample | — | Planned |
 | —  | Transmission / volume (glass) | consumer of F1–F4 | Optional — see [transmission.md](transmission.md) |
@@ -54,14 +54,23 @@ edges without re-touching the ordering core.
 mip generation) can run *concurrently with* graphics work across frames — the
 heart of the engine's overlap requirement.
 
-**Plan.**
+**Scope — establish the queue only.** F2 selects and creates the queue and
+exposes it; it deliberately does *not* add the per-group routing or a
+compute-queue one-shot variant, because there is no compute consumer yet and
+unused plumbing is speculative dead code. Those land with the first consumer
+(F4's compute downsample / SSS blur), where they are testable.
+
 - Select a compute queue family in `Device` — prefer a *dedicated* async
-  family (COMPUTE without GRAPHICS); fall back to the graphics family when
-  none exists.
-- Add `compute_queue()` + the family index.
-- `SubmissionGroup::submit()` already takes a `vk::Queue`, so routing a compute
-  group to the compute queue is largely graph-side; F1's DAG wires the
-  graphics↔compute timeline synchronization.
+  family (COMPUTE without GRAPHICS); fall back to the graphics family when none
+  exists (the spec guarantees graphics families also support compute, so the
+  fallback always works).
+- Expose `compute_queue()` and `has_dedicated_compute_queue()`.
+- Skip requesting a duplicate `VkQueue` when the compute family coincides with
+  an already-requested family.
+
+When the first compute group is added: `SubmissionGroup::submit()` already
+takes a `vk::Queue`, so routing is largely graph-side, and F1's DAG wires the
+graphics↔compute timeline synchronization.
 
 **Out of scope.** IBL generation stays on the graphics queue. It is a one-time
 precompute at load with nothing to overlap, so async buys nothing there (and a
