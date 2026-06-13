@@ -24,6 +24,16 @@ uint32_t SceneData::material_count() const
     ? static_cast<uint32_t>(gltf_scene.materials.size()) : 1;
 }
 
+bool SceneData::has_transmission() const
+{
+  if (!has_multi_material())
+    return false;
+  for (const auto& m : gltf_scene.materials)
+    if (m.transmissionFactor > 0.0f)
+      return true;
+  return false;
+}
+
 void SceneData::load_model(const vkwave::Device& device, const std::string& path)
 {
   gltf_scene = {};

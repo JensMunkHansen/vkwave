@@ -191,3 +191,26 @@ infrastructure (`commands.h::submit_one_shot`).
   the window during load ("application not responding"). Fixes: batch all
   uploads into one command buffer / submission, and/or load on a worker thread.
   A natural place to reuse the F4 mip-generation and the compute queue (F2).
+
+- **Synchronization validation (enabled in Debug).** The standard validation
+  layer catches API misuse (wrong layouts, missing usage flags, object
+  lifetimes) but **not synchronization hazards** — a missing or too-narrow
+  barrier produces *correct-looking API calls* that race on the GPU. The engine
+  declares ordering (`depends_on`) and barriers (render-pass layouts; explicit
+  `vkCmdPipelineBarrier` for transfers/compute) **by hand** — there is no
+  auto-derived frame graph — so a missed barrier is a developer error, not a
+  compile or standard-validation error. Vulkan's **synchronization validation**
+  (`VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT`) detects
+  RAW/WAR/WAW hazards across draws, copies, and dispatches. It is now enabled via
+  `VkValidationFeaturesEXT` on the instance `pNext` whenever the validation layer
+  is active (i.e. `VKWAVE_DEBUG` / Debug config). It would have caught the
+  pbr→composite wait-stage bug (which produced torn frames with *zero*
+  standard-validation errors), and is the backstop for the hand-written barriers
+  transmission's cross-queue snapshot pass will add.
+
+  > Note: `VKWAVE_DEBUG` had regressed to *always off* (a stray unconditional
+  > `set(VKWAVE_DEBUG OFF)` in CMake clobbered the auto-enable), so **no**
+  > validation ran in any build. It is now a per-config compile definition
+  > (`$<$<CONFIG:Debug>:VKWAVE_DEBUG>`) — required because the multi-config
+  > generator shares one generated `config.h` across configs, so a
+  > `#cmakedefine` cannot vary Debug vs Release.

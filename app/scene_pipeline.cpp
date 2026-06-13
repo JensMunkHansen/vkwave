@@ -61,6 +61,23 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
   depth_handle = engine.graph->resources().add_depth("scene_depth", kDepthFormat,
     msaa_samples);
 
+  // Opt-in (gate at build time, not record time): a transmissive scene needs a
+  // per-slot, sampleable snapshot of the opaque HDR for the refraction pass to
+  // read. Allocate it only when there is glass — otherwise it would cost real
+  // VRAM for nothing and the DAG is identical to opaque-only. The snapshot is
+  // single-sample (the opaque HDR is already resolved) and is filled via a copy,
+  // hence eSampled | eTransferDst. Phase 1 is sharp (no mips); the roughness-blur
+  // phase will register it with a full mip chain instead. The consuming pass is
+  // added in a later slice — for now the resource is reserved, not yet sampled.
+  if (data.has_transmission())
+  {
+    snapshot_handle = engine.graph->resources().add_color(
+      "transmission_snapshot", kHdrFormat,
+      vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
+    spdlog::info("Scene has transmissive materials — registered per-slot "
+                 "transmission snapshot resource");
+  }
+
   // PBR pass: renders to the graph-owned HDR target + depth
   auto pbr_spec = vkwave::PBRPass::pipeline_spec();
   pbr_spec.existing_renderpass = scene_renderpass;

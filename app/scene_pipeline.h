@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.hpp>
 
 #include <memory>
+#include <optional>
 
 struct Engine;
 struct SceneData;
@@ -21,6 +22,10 @@ struct ScenePipeline
   // Graph-owned HDR color target + depth (one per slot), referenced by handle.
   vkwave::FrameResourcePool::ColorHandle hdr_handle{ 0 };
   vkwave::FrameResourcePool::DepthHandle depth_handle{ 0 };
+  // Per-slot snapshot of the opaque HDR, sampled by the transmission pass for
+  // refraction. Registered only when the scene has transmissive materials
+  // (engaged == has value); otherwise the graph is identical to opaque-only.
+  std::optional<vkwave::FrameResourcePool::ColorHandle> snapshot_handle;
   vk::Sampler hdr_sampler{ VK_NULL_HANDLE };
   vk::RenderPass scene_renderpass{ VK_NULL_HANDLE };
   vk::RenderPass composite_renderpass{ VK_NULL_HANDLE };
