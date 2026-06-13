@@ -31,6 +31,7 @@ layout(push_constant) uniform PushConstants {
   float clearcoatRoughnessOverride;
   float anisotropyOverride;
   float anisotropyRotationOverride;
+  float mipBias;
 } pc;
 
 // Outputs to fragment shader

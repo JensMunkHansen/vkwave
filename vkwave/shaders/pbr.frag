@@ -70,6 +70,7 @@ layout(push_constant) uniform PushConstants {
   float clearcoatRoughnessOverride;
   float anisotropyOverride;
   float anisotropyRotationOverride;
+  float mipBias;
 } pc;
 
 layout(location = 0) in vec3 fragColor;
@@ -266,7 +267,7 @@ void main()
   float alphaCutoff = m.alphaCutoff;
 
   // Alpha (needed by all paths for alpha test / blend)
-  vec4 texColor = texture(baseColorTexture, uvBase);
+  vec4 texColor = texture(baseColorTexture, uvBase, pc.mipBias);
   vec4 baseColor = texColor * baseColorFactor;
   float alpha = baseColor.a;
   if (alphaMode == 0u) alpha = 1.0;                       // opaque
@@ -278,7 +279,7 @@ void main()
     // Normals
     vec3 N;
     if ((flags & 1u) != 0u) {
-      vec3 nm = texture(normalTexture, uvNorm).rgb * 2.0 - 1.0;
+      vec3 nm = texture(normalTexture, uvNorm, pc.mipBias).rgb * 2.0 - 1.0;
       nm.xy *= m.normalScale;
       N = normalize(fragTBN * nm);
     } else {
@@ -298,36 +299,36 @@ void main()
   }
 
   if (pc.debugMode == 3) {
-    float metallic = clamp(texture(metallicRoughnessTexture, uvMR).b * metallicFactor, 0.0, 1.0);
+    float metallic = clamp(texture(metallicRoughnessTexture, uvMR, pc.mipBias).b * metallicFactor, 0.0, 1.0);
     outColor = vec4(vec3(metallic), alpha);
     return;
   }
 
   if (pc.debugMode == 4) {
-    float roughness = clamp(texture(metallicRoughnessTexture, uvMR).g * roughnessFactor, 0.0, 1.0);
+    float roughness = clamp(texture(metallicRoughnessTexture, uvMR, pc.mipBias).g * roughnessFactor, 0.0, 1.0);
     outColor = vec4(vec3(roughness), alpha);
     return;
   }
 
   if (pc.debugMode == 5) {
-    outColor = vec4(vec3(texture(aoTexture, uvAO).r), alpha);
+    outColor = vec4(vec3(texture(aoTexture, uvAO, pc.mipBias).r), alpha);
     return;
   }
 
   if (pc.debugMode == 6) {
-    outColor = vec4(texture(emissiveTexture, uvEmis).rgb, alpha);
+    outColor = vec4(texture(emissiveTexture, uvEmis, pc.mipBias).rgb, alpha);
     return;
   }
 
   if (pc.debugMode == 7) {
-    float cc = clearcoatFactor * texture(clearcoatTexture, uvCC).r;
+    float cc = clearcoatFactor * texture(clearcoatTexture, uvCC, pc.mipBias).r;
     outColor = vec4(vec3(cc), alpha);
     return;
   }
 
   if (pc.debugMode == 8) {
     float a = anisotropyStrength;
-    if ((flags & 32u) != 0u) a *= texture(anisotropyTexture, uvAni).b;
+    if ((flags & 32u) != 0u) a *= texture(anisotropyTexture, uvAni, pc.mipBias).b;
     outColor = vec4(vec3(a), alpha);
     return;
   }
@@ -337,7 +338,7 @@ void main()
   // Normal mapping (toggled by flags bit 0)
   vec3 N;
   if ((flags & 1u) != 0u) {
-    vec3 nm = texture(normalTexture, uvNorm).rgb * 2.0 - 1.0;
+    vec3 nm = texture(normalTexture, uvNorm, pc.mipBias).rgb * 2.0 - 1.0;
     nm.xy *= m.normalScale;
     N = normalize(fragTBN * nm);
   } else {
@@ -353,12 +354,12 @@ void main()
   }
 
   // Metallic/roughness (glTF: G=roughness, B=metallic)
-  vec4 mrSample = texture(metallicRoughnessTexture, uvMR);
+  vec4 mrSample = texture(metallicRoughnessTexture, uvMR, pc.mipBias);
   float perceptualRoughness = clamp(mrSample.g * roughnessFactor, 0.0, 1.0);
   float metallic = clamp(mrSample.b * metallicFactor, 0.0, 1.0);
 
   // AO (R channel)
-  float ao = texture(aoTexture, uvAO).r;
+  float ao = texture(aoTexture, uvAO, pc.mipBias).r;
 
   // Alpha roughness (squared per glTF spec)
   float alphaRoughness = perceptualRoughness * perceptualRoughness;
@@ -396,7 +397,7 @@ void main()
     vec2 direction = dirBase;
     float anisotropy = anisotropyStrength;
     if ((flags & 32u) != 0u) {
-      vec3 aTex = texture(anisotropyTexture, uvAni).rgb;
+      vec3 aTex = texture(anisotropyTexture, uvAni, pc.mipBias).rgb;
       direction = aTex.rg * 2.0 - 1.0;
       direction = mat2(dirBase.x, dirBase.y, -dirBase.y, dirBase.x) * normalize(direction);
       anisotropy *= aTex.b;
@@ -454,7 +455,7 @@ void main()
 
   // Add emissive (toggled by flags bit 1)
   if ((flags & 2u) != 0u)
-    color += texture(emissiveTexture, uvEmis).rgb;
+    color += texture(emissiveTexture, uvEmis, pc.mipBias).rgb;
 
   // ---- Clear coat (KHR_materials_clearcoat, flags bit 2) ----
   // A thin dielectric film (IOR 1.5, F0 = 0.04) layered over the base material.
@@ -462,9 +463,9 @@ void main()
   // reflectance, then the coat's own specular lobe is added on top.
   if ((flags & 4u) != 0u && clearcoatFactor > 0.0)
   {
-    float cc = clearcoatFactor * texture(clearcoatTexture, uvCC).r;
+    float cc = clearcoatFactor * texture(clearcoatTexture, uvCC, pc.mipBias).r;
     float ccPerceptualRough = clamp(
-      clearcoatRoughnessFactor * texture(clearcoatRoughnessTexture, uvCCR).g,
+      clearcoatRoughnessFactor * texture(clearcoatRoughnessTexture, uvCCR, pc.mipBias).g,
       0.0, 1.0);
     float ccAlpha = ccPerceptualRough * ccPerceptualRough;
 
@@ -472,7 +473,7 @@ void main()
     // normal — the smooth coat does NOT inherit the base material's normal map.
     vec3 ccN;
     if ((flags & 8u) != 0u) {
-      vec3 nm = texture(clearcoatNormalTexture, uvCCN).rgb * 2.0 - 1.0;
+      vec3 nm = texture(clearcoatNormalTexture, uvCCN, pc.mipBias).rgb * 2.0 - 1.0;
       ccN = normalize(fragTBN * nm);
     } else {
       ccN = normalize(fragNormal);

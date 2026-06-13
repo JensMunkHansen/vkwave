@@ -49,6 +49,10 @@ struct PBRContext
   float metallic_override{ -1.0f };
   float roughness_override{ -1.0f };
 
+  // Texture LOD bias. 0 = normal mipmapping; a large negative value forces
+  // mip 0 (mipmapping effectively off) for A/B comparison in the UI.
+  float mip_bias{ 0.0f };
+
   // Optional global clear-coat override (non-glTF authoring convenience).
   // When >= 0, replaces each material's clearcoatFactor so coat can be
   // previewed on assets that don't author KHR_materials_clearcoat.
