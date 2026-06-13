@@ -33,6 +33,11 @@ struct AppConfig
   int default_hdr_index{ -1 };           // index into hdr_paths, -1 = use hdr_path, clamped to valid range
   int default_tonemap_index{ 5 };        // 0=None 1=Reinhard 2=ACES(Fast) 3=ACES(Hill) 4=ACES+Boost 5=KhronosPBRNeutral
 
+  // Camera view orbit applied after auto-framing — handy for headless
+  // screenshots / testing, so a model can be viewed from any angle.
+  float cam_azimuth{ 0.0f };             // orbit degrees about the view-up axis
+  float cam_elevation{ 0.0f };           // orbit degrees up/down
+
   // [debug]
   uint64_t max_frames{ 0 };      // 0 = unlimited, >0 = exit after N frames
   uint64_t screenshot_frame{ 0 }; // 0 = disabled, >0 = auto-capture at frame N (headless verification)

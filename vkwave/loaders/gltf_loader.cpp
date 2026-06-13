@@ -1022,10 +1022,34 @@ void traverse_nodes(
           }
           scene_mat.normalTexture = extract_texture(
             primitive.material->normal_texture, device, base_path, "normal", true);
+          scene_mat.normalScale = primitive.material->normal_texture.scale;
           scene_mat.emissiveTexture = extract_texture(
             primitive.material->emissive_texture, device, base_path, "emissive");
           scene_mat.aoTexture = extract_texture(
             primitive.material->occlusion_texture, device, base_path, "ao", true);
+
+          // Record per-texture UV set (TEXCOORD_1) and KHR_texture_transform.
+          // Slot order matches shader set-1 binding order (see SceneMaterial::uvSets).
+          auto uv_bit = [&scene_mat](const cgltf_texture_view& v, uint32_t slot) {
+            if (!v.texture) return;
+            if (v.texcoord == 1) scene_mat.uvSets |= (1u << slot);
+            if (v.has_transform)
+            {
+              auto& x = scene_mat.texXforms[slot];
+              x.offset = glm::vec2(v.transform.offset[0], v.transform.offset[1]);
+              x.scale  = glm::vec2(v.transform.scale[0], v.transform.scale[1]);
+              x.rotation = v.transform.rotation;
+              // The transform may override the UV set.
+              if (v.transform.has_texcoord && v.transform.texcoord == 1)
+                scene_mat.uvSets |= (1u << slot);
+            }
+          };
+          const cgltf_material* M = primitive.material;
+          uv_bit(M->pbr_metallic_roughness.base_color_texture, 0);
+          uv_bit(M->normal_texture, 1);
+          uv_bit(M->pbr_metallic_roughness.metallic_roughness_texture, 2);
+          uv_bit(M->emissive_texture, 3);
+          uv_bit(M->occlusion_texture, 4);
 
           // Extract material scalar properties
           if (primitive.material->has_pbr_metallic_roughness)
@@ -1078,6 +1102,9 @@ void traverse_nodes(
             scene_mat.clearcoatNormalTexture = extract_texture(
               cc.clearcoat_normal_texture, device, base_path, "clearcoatNormal", true);
             scene_mat.hasClearcoatNormal = (scene_mat.clearcoatNormalTexture != nullptr);
+            uv_bit(cc.clearcoat_texture, 5);
+            uv_bit(cc.clearcoat_roughness_texture, 6);
+            uv_bit(cc.clearcoat_normal_texture, 7);
           }
 
           // KHR_materials_anisotropy
@@ -1089,6 +1116,7 @@ void traverse_nodes(
             scene_mat.anisotropyTexture = extract_texture(
               aniso.anisotropy_texture, device, base_path, "anisotropy", true);
             scene_mat.hasAnisotropyTexture = (scene_mat.anisotropyTexture != nullptr);
+            uv_bit(aniso.anisotropy_texture, 8);
           }
 
           // KHR_materials_transmission
@@ -1184,6 +1212,7 @@ void traverse_nodes(
       const cgltf_accessor* position_accessor = nullptr;
       const cgltf_accessor* normal_accessor = nullptr;
       const cgltf_accessor* texcoord_accessor = nullptr;
+      const cgltf_accessor* texcoord1_accessor = nullptr;
       const cgltf_accessor* color_accessor = nullptr;
       const cgltf_accessor* tangent_accessor = nullptr;
 
@@ -1200,6 +1229,7 @@ void traverse_nodes(
             break;
           case cgltf_attribute_type_texcoord:
             if (attr.index == 0) texcoord_accessor = attr.data;
+            else if (attr.index == 1) texcoord1_accessor = attr.data;
             break;
           case cgltf_attribute_type_color:
             if (attr.index == 0) color_accessor = attr.data;
@@ -1219,10 +1249,11 @@ void traverse_nodes(
       }
 
       // Read vertex data
-      std::vector<float> positions, normals, texcoords, colors, tangents;
+      std::vector<float> positions, normals, texcoords, texcoords1, colors, tangents;
       read_accessor_data(position_accessor, positions, 3);
       if (normal_accessor) read_accessor_data(normal_accessor, normals, 3);
       if (texcoord_accessor) read_accessor_data(texcoord_accessor, texcoords, 2);
+      if (texcoord1_accessor) read_accessor_data(texcoord1_accessor, texcoords1, 2);
       if (color_accessor)
       {
         size_t cc = (color_accessor->type == cgltf_type_vec4) ? 4 : 3;
@@ -1252,6 +1283,11 @@ void traverse_nodes(
           v.texCoord = glm::vec2(texcoords[i * 2 + 0], texcoords[i * 2 + 1]);
         else
           v.texCoord = glm::vec2(0.0f);
+
+        if (!texcoords1.empty())
+          v.texCoord1 = glm::vec2(texcoords1[i * 2 + 0], texcoords1[i * 2 + 1]);
+        else
+          v.texCoord1 = glm::vec2(0.0f);
 
         if (!colors.empty())
         {

@@ -10,7 +10,7 @@
 
 struct Engine;
 struct SceneData;
-namespace vkwave { class ExecutionGroup; class Swapchain; }
+namespace vkwave { class ExecutionGroup; class Swapchain; class Buffer; }
 
 /// Pipeline infrastructure: render passes, HDR images, sampler, execution
 /// group wiring, ImGui, MSAA. References SceneData for descriptor writes.
@@ -53,6 +53,14 @@ struct ScenePipeline
 
 private:
   Engine* m_engine;
+
+  // Immutable per-material constants (GpuMaterial[]), shared across all frames.
+  // Built once per model load; only the descriptor is rewritten on rebuild.
+  std::unique_ptr<vkwave::Buffer> material_buffer;
+
+  /// (Re)build the material SSBO from the active materials and write its
+  /// descriptor to set 2. Called from write_pbr_descriptors().
+  void upload_material_buffer(SceneData& data);
 
   void create_hdr_images(vk::Extent2D extent, uint32_t count);
 };

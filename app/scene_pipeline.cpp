@@ -2,7 +2,11 @@
 #include "scene_data.h"
 #include "engine.h"
 
+#include <cmath>
+
+#include <vkwave/core/buffer.h>
 #include <vkwave/core/device.h>
+#include <vkwave/core/pbr_ubo.h>
 #include <vkwave/core/swapchain.h>
 #include <vkwave/pipeline/pipeline.h>
 #include <vkwave/pipeline/pbr_pass.h>
@@ -220,6 +224,80 @@ void ScenePipeline::write_pbr_descriptors(SceneData& data)
 
   // Set 2: per-scene IBL textures (single descriptor set)
   write_ibl_descriptors(data);
+
+  // Set 2, binding 3: immutable per-material SSBO (shared across all frames)
+  upload_material_buffer(data);
+}
+
+void ScenePipeline::upload_material_buffer(SceneData& data)
+{
+  // KHR_texture_transform → precomputed affine (matrix = T * R * S), packed as
+  // mat2 (col0.xy, col1.xy) + offset (col2.xy). Matches the GLSL spec example.
+  auto pack_xform = [](vkwave::GpuMaterial& gm, int slot, const vkwave::TexTransform& t) {
+    const float c = std::cos(t.rotation), s = std::sin(t.rotation);
+    glm::mat3 T(1, 0, 0, 0, 1, 0, t.offset.x, t.offset.y, 1);
+    glm::mat3 R(c, s, 0, -s, c, 0, 0, 0, 1);
+    glm::mat3 S(t.scale.x, 0, 0, 0, t.scale.y, 0, 0, 0, 1);
+    glm::mat3 M = T * R * S;
+    gm.texXform[2 * slot + 0] = glm::vec4(M[0][0], M[0][1], M[1][0], M[1][1]);
+    gm.texXform[2 * slot + 1] = glm::vec4(M[2][0], M[2][1], 0.0f, 0.0f);
+  };
+
+  auto to_gpu = [&](const vkwave::SceneMaterial& m) {
+    vkwave::GpuMaterial gm{};
+    vkwave::set_identity_tex_xforms(gm);
+    for (int s = 0; s < 9; ++s)
+      pack_xform(gm, s, m.texXforms[s]);
+    gm.baseColorFactor = m.baseColorFactor;
+    gm.metallicFactor = m.metallicFactor;
+    gm.roughnessFactor = m.roughnessFactor;
+    gm.clearcoatFactor = m.clearcoatFactor;
+    gm.clearcoatRoughnessFactor = m.clearcoatRoughnessFactor;
+    gm.anisotropyStrength = m.anisotropyStrength;
+    gm.anisotropyRotation = m.anisotropyRotation;
+    gm.alphaCutoff = m.alphaCutoff;
+    gm.alphaMode = static_cast<uint32_t>(m.alphaMode);
+    gm.materialFlags = 0;
+    if (m.hasClearcoatNormal)   gm.materialFlags |= vkwave::PbrFlags::ClearcoatNormalMap;
+    if (m.hasAnisotropyTexture) gm.materialFlags |= vkwave::PbrFlags::AnisotropyMap;
+    gm.uvSets = m.uvSets;
+    gm.normalScale = m.normalScale;
+    return gm;
+  };
+
+  std::vector<vkwave::GpuMaterial> gpu_materials;
+  if (data.has_multi_material())
+  {
+    gpu_materials.reserve(data.gltf_scene.materials.size());
+    for (auto& m : data.gltf_scene.materials)
+      gpu_materials.push_back(to_gpu(m));
+  }
+  else
+  {
+    // Single-material / cube fallback: one default material (white,
+    // metallic=1, roughness=1) matching the legacy push-constant defaults.
+    vkwave::GpuMaterial gm{};
+    vkwave::set_identity_tex_xforms(gm);
+    gpu_materials.push_back(gm);
+  }
+
+  const vk::DeviceSize bytes =
+    gpu_materials.size() * sizeof(vkwave::GpuMaterial);
+
+  // (Re)create the buffer only when missing or too small. Rebuild/resize paths
+  // drain the GPU before calling this, so replacing the buffer here is safe.
+  if (!material_buffer || material_buffer->size() < bytes)
+  {
+    material_buffer = std::make_unique<vkwave::Buffer>(
+      *m_engine->device, "material_ssbo", bytes,
+      vk::BufferUsageFlagBits::eStorageBuffer,
+      vk::MemoryPropertyFlagBits::eHostVisible
+        | vk::MemoryPropertyFlagBits::eHostCoherent);
+  }
+  material_buffer->update(gpu_materials.data(), bytes);
+
+  // Singleton set 2, binding 3 — one descriptor shared by every frame.
+  pbr_group().write_buffer_descriptor(2, 3, material_buffer->buffer(), bytes);
 }
 
 void ScenePipeline::write_ibl_descriptors(SceneData& data)

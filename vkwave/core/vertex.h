@@ -17,6 +17,7 @@ namespace vkwave
 ///   layout(location = 2) in vec3 inColor;
 ///   layout(location = 3) in vec2 inTexCoord;
 ///   layout(location = 4) in vec4 inTangent;
+///   layout(location = 5) in vec2 inTexCoord1;
 struct Vertex
 {
   glm::vec3 position{ 0.0f };
@@ -24,6 +25,7 @@ struct Vertex
   glm::vec3 color{ 1.0f };
   glm::vec2 texCoord{ 0.0f };
   glm::vec4 tangent{ 1.0f, 0.0f, 0.0f, 1.0f };  // xyz=tangent, w=handedness
+  glm::vec2 texCoord1{ 0.0f };                  // second UV set (glTF TEXCOORD_1)
 
   /// @brief Get the vertex binding description.
   /// Describes how to read vertex data from the buffer.
@@ -39,9 +41,9 @@ struct Vertex
   /// @brief Get the vertex attribute descriptions.
   /// Describes the layout of each vertex attribute.
   /// @see glTF 2.0 spec: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes
-  static std::array<vk::VertexInputAttributeDescription, 5> attribute_descriptions()
+  static std::array<vk::VertexInputAttributeDescription, 6> attribute_descriptions()
   {
-    std::array<vk::VertexInputAttributeDescription, 5> descriptions{};
+    std::array<vk::VertexInputAttributeDescription, 6> descriptions{};
 
     // Position at location 0
     descriptions[0].binding = 0;
@@ -73,6 +75,12 @@ struct Vertex
     descriptions[4].location = 4;
     descriptions[4].format = vk::Format::eR32G32B32A32Sfloat;
     descriptions[4].offset = offsetof(Vertex, tangent);
+
+    // Second UV set at location 5 (glTF TEXCOORD_1)
+    descriptions[5].binding = 0;
+    descriptions[5].location = 5;
+    descriptions[5].format = vk::Format::eR32G32Sfloat;
+    descriptions[5].offset = offsetof(Vertex, texCoord1);
 
     return descriptions;
   }

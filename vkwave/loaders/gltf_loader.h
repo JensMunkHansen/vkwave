@@ -90,6 +90,15 @@ struct ScenePrimitive
   glm::vec3 centroid{0.0f};  // object-space centroid for depth sorting
 };
 
+/// KHR_texture_transform for one texture reference. Defaults are identity
+/// (no-op), so it can always be applied unconditionally.
+struct TexTransform
+{
+  glm::vec2 offset{0.0f, 0.0f};
+  glm::vec2 scale{1.0f, 1.0f};
+  float rotation{0.0f}; // radians
+};
+
 /// @brief Material data for a scene primitive.
 struct SceneMaterial
 {
@@ -103,6 +112,20 @@ struct SceneMaterial
   glm::vec4 baseColorFactor{1.0f, 1.0f, 1.0f, 1.0f};
   float metallicFactor{1.0f};
   float roughnessFactor{1.0f};
+
+  // Per-texture UV-set selector (KHR multi-UV). Bit b set => the texture at
+  // shader set-1 binding b samples TEXCOORD_1 instead of TEXCOORD_0.
+  // Bit order: 0=baseColor 1=normal 2=metallicRoughness 3=emissive 4=ao
+  //            5=clearcoat 6=clearcoatRoughness 7=clearcoatNormal 8=anisotropy
+  uint32_t uvSets{0};
+
+  // KHR_texture_transform per texture slot (same slot order as uvSets bits).
+  TexTransform texXforms[9];
+
+  // glTF normalTexture.scale — scales the tangent-space X/Y of the normal map
+  // (0 = flat). Authors use it to tune detail-normal (e.g. paint flake) strength.
+  float normalScale{1.0f};
+
   AlphaMode alphaMode{AlphaMode::Opaque};
   float alphaCutoff{0.5f};
   bool doubleSided{false};
