@@ -76,6 +76,7 @@ private:
 
   uint32_t m_width{ 0 };
   uint32_t m_height{ 0 };
+  uint32_t m_mip_levels{ 1 };
   vk::Format m_format{ vk::Format::eR8G8B8A8Srgb };
 
   void create_image();
@@ -84,6 +85,10 @@ private:
   void upload_pixels(const uint8_t* pixels);
   void transition_layout(vk::CommandBuffer cmd, vk::ImageLayout old_layout,
     vk::ImageLayout new_layout);
+  /// Generate the full mip chain from mip 0 via a vkCmdBlitImage chain and
+  /// leave every level in ShaderReadOnlyOptimal. Assumes all levels are in
+  /// TransferDstOptimal and mip 0 holds the source image.
+  void generate_mipmaps(vk::CommandBuffer cmd);
 };
 
 } // namespace vkwave
