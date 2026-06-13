@@ -346,6 +346,8 @@ void ScenePipeline::upload_material_buffer(SceneData& data)
   if (auto* tr = transmission_group())
   {
     tr->write_buffer_descriptor(1, 0, material_buffer->buffer(), bytes);
+    // (set 1 binding 1 prefilterMap is written in write_ibl_descriptors, so an
+    //  IBL switch refreshes it.)
 
     // Set 2: per-material transmission mask (white fallback => scalar factor).
     static const std::unique_ptr<vkwave::Texture> none;
@@ -368,6 +370,12 @@ void ScenePipeline::write_ibl_descriptors(SceneData& data)
     data.ibl->irradiance_view(), data.ibl->irradiance_sampler());
   group.write_image_descriptor(2, "prefilterMap",
     data.ibl->prefiltered_view(), data.ibl->prefiltered_sampler());
+
+  // The transmission group reflects the same prefiltered env at its Fresnel rim
+  // (set 1, binding 1). Refreshed here so an IBL switch updates the glass too.
+  if (auto* tr = transmission_group())
+    tr->write_image_descriptor(1, "prefilterMap",
+      data.ibl->prefiltered_view(), data.ibl->prefiltered_sampler());
 }
 
 void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)

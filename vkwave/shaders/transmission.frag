@@ -46,6 +46,10 @@ layout(set = 1, binding = 0, std430) readonly buffer MaterialBuffer {
   GpuMaterial materials[];
 } matbuf;
 
+// Per-scene prefiltered environment cubemap (IBL) — reflected at the Fresnel rim
+// so the glass mirrors its surroundings instead of a flat white sheen.
+layout(set = 1, binding = 1) uniform samplerCube prefilterMap;
+
 // Per-material transmission mask (KHR_materials_transmission texture). R channel
 // multiplies transmissionFactor, so only the textured regions refract; the rest
 // stays opaque (e.g. TransmissionTest's "snake" pattern). White fallback for
@@ -120,10 +124,14 @@ void main()
   float transmission = clamp(
     m.transmissionFactor * texture(transmissionMask, fragTexCoord).r, 0.0, 1.0);
 
-  // Blend the surface base colour with the refracted background by transmission,
-  // then add the Fresnel rim on top.
+  // Blend the surface base colour with the refracted background by transmission.
   vec3 color = mix(m.baseColorFactor.rgb, transmitted, transmission);
-  color = mix(color, vec3(1.0), fresnel);
+
+  // Fresnel reflection of the environment (sharp; roughness blur is a later
+  // phase) — the glass mirrors its surroundings at grazing angles.
+  vec3 R = reflect(-V, N);
+  vec3 envReflection = textureLod(prefilterMap, R, 0.0).rgb;
+  color = mix(color, envReflection, fresnel);
 
   outColor = vec4(color, 1.0);
 }
