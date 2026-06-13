@@ -1,6 +1,7 @@
 #include "scene.h"
 #include "engine.h"
 #include "screenshot.h"
+#include "transmission.h"
 
 #include <vkwave/core/renderdoc.h>
 #include <vkwave/core/swapchain.h>
@@ -86,10 +87,24 @@ void Scene::wire_record_callbacks()
       blend_pass.record(cmd);
     });
 
-  // PBR post-record: record HDR→buffer copy for screenshots.
-  // Runs after endRenderPass(), before cmd.end(), same command buffer.
+  // PBR post-record: snapshot copy (glass) + HDR→buffer copy (screenshots).
+  // Runs after endRenderPass(), before cmd.end(), same command buffer — so no
+  // extra vkQueueSubmit.
   pipeline->pbr_group().set_post_record_fn(
     [this](vk::CommandBuffer cmd, uint32_t /*slot_index*/) {
+      // Transmission snapshot: copy the opaque HDR into the per-slot snapshot the
+      // refraction pass samples. Only present for transmissive scenes (gated at
+      // build time); the resource is consumed by a later slice.
+      if (pipeline->snapshot_handle)
+      {
+        auto slot = m_engine->graph->last_offscreen_slot();
+        auto& pool = m_engine->graph->resources();
+        record_transmission_snapshot_copy(cmd,
+          pool.color_image(pipeline->hdr_handle, slot),
+          pool.color_image(*pipeline->snapshot_handle, slot),
+          pipeline->pbr_group().extent());
+      }
+
       if (!screenshot_requested || screenshot_in_flight || screenshot_compressing)
         return;
       if (!screenshot_readback)

@@ -5,6 +5,7 @@ add_executable(vkwave_app
   scene_data.cpp
   scene_pipeline.cpp
   screenshot.cpp
+  transmission.cpp
   input.cpp
   app_config.cpp
   cli.cpp
