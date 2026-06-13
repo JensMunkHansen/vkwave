@@ -143,6 +143,9 @@ struct SceneMaterial
   // KHR_materials_transmission (proxy for diffuse_transmission)
   float transmissionFactor{0.0f};
 
+  // KHR_materials_ior — index of refraction (default 1.5 dielectric).
+  float ior{1.5f};
+
   // KHR_materials_clearcoat — thin dielectric film (IOR 1.5) over the base.
   // Textures (when present) multiply the scalar factors; coat normal is separate.
   std::unique_ptr<Texture> clearcoatTexture;          // R = strength multiplier

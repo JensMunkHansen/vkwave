@@ -50,6 +50,12 @@ struct GpuMaterial {
   float normalScale; // glTF normalTexture.scale
   uint _pad2;
   vec4 texXform[18]; // KHR_texture_transform: per slot [2s]=mat2, [2s+1].xy=offset
+  // KHR_materials_transmission / _ior / _volume (consumed by a later pass).
+  float transmissionFactor;
+  float ior;
+  float thicknessFactor;
+  float _pad3;
+  vec4 attenuation; // rgb=attenuation color, w=attenuation distance (0=infinite)
 };
 layout(set = 2, binding = 3, std430) readonly buffer MaterialBuffer {
   GpuMaterial materials[];

@@ -244,6 +244,10 @@ void ScenePipeline::upload_material_buffer(SceneData& data)
     if (m.hasAnisotropyTexture) gm.materialFlags |= vkwave::PbrFlags::AnisotropyMap;
     gm.uvSets = m.uvSets;
     gm.normalScale = m.normalScale;
+    gm.transmissionFactor = m.transmissionFactor;
+    gm.ior = m.ior;
+    gm.thicknessFactor = m.thicknessFactor;
+    gm.attenuation = glm::vec4(m.attenuationColor, m.attenuationDistance);
     return gm;
   };
 

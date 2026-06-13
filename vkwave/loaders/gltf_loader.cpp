@@ -1126,6 +1126,10 @@ void traverse_nodes(
               primitive.material->transmission.transmission_factor;
           }
 
+          // KHR_materials_ior (index of refraction; default 1.5 for dielectrics).
+          if (primitive.material->has_ior)
+            scene_mat.ior = primitive.material->ior.ior;
+
           // KHR_materials_diffuse_transmission — not natively supported by cgltf,
           // so we parse the raw extension JSON from material->extensions[].
           // Uses diffuseTransmissionFactor as our transmissionFactor.
