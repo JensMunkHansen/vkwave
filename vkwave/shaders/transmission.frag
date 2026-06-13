@@ -87,6 +87,9 @@ void main()
   GpuMaterial m = matbuf.materials[pc.materialIndex];
 
   vec3 N = normalize(fragNormal);
+  // Double-sided (thin) glass: back faces point away, so flip the normal toward
+  // the viewer — otherwise dot(N,V) < 0 forces Fresnel to 1 (a chrome look).
+  if (!gl_FrontFacing) N = -N;
   vec3 V = normalize(ubo.camPos.xyz - fragPos);
   float ior = max(m.ior, 1.0);
 
