@@ -46,6 +46,12 @@ layout(set = 1, binding = 0, std430) readonly buffer MaterialBuffer {
   GpuMaterial materials[];
 } matbuf;
 
+// Per-material transmission mask (KHR_materials_transmission texture). R channel
+// multiplies transmissionFactor, so only the textured regions refract; the rest
+// stays opaque (e.g. TransmissionTest's "snake" pattern). White fallback for
+// materials without a texture => the scalar factor is used unchanged.
+layout(set = 2, binding = 0) uniform sampler2D transmissionMask;
+
 // Push constant — must match PbrPushConstants (C++) and pbr.vert exactly.
 layout(push_constant) uniform PushConstants {
   mat4 model;
@@ -108,9 +114,15 @@ void main()
   float F0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
   float fresnel = F0 + (1.0 - F0) * pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 5.0);
 
+  // Per-pixel transmission: scalar factor masked by the texture's R channel.
+  // Where the mask is low the surface is opaque (shows base colour); where high
+  // it refracts the background.
+  float transmission = clamp(
+    m.transmissionFactor * texture(transmissionMask, fragTexCoord).r, 0.0, 1.0);
+
   // Blend the surface base colour with the refracted background by transmission,
   // then add the Fresnel rim on top.
-  vec3 color = mix(m.baseColorFactor.rgb, transmitted, clamp(m.transmissionFactor, 0.0, 1.0));
+  vec3 color = mix(m.baseColorFactor.rgb, transmitted, transmission);
   color = mix(color, vec3(1.0), fresnel);
 
   outColor = vec4(color, 1.0);

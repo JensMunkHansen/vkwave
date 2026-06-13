@@ -1124,6 +1124,10 @@ void traverse_nodes(
           {
             scene_mat.transmissionFactor =
               primitive.material->transmission.transmission_factor;
+            // Per-pixel transmission mask (linear; R channel). Sampled with UV0.
+            scene_mat.transmissionTexture = extract_texture(
+              primitive.material->transmission.transmission_texture,
+              device, base_path, "transmission", true);
           }
 
           // KHR_materials_ior (index of refraction; default 1.5 for dielectrics).
