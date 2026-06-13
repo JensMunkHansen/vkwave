@@ -180,6 +180,27 @@ void RenderGraph::resize(const Swapchain& swapchain)
   build(swapchain);
 }
 
+void RenderGraph::reset_structure()
+{
+  drain();
+
+  for (auto& group : m_offscreen_groups)
+    group->destroy_frame_resources();
+  if (m_present_group)
+    m_present_group->destroy_frame_resources();
+
+  m_resources.destroy();
+  m_resources.clear_specs();
+
+  m_offscreen_groups.clear();
+  m_present_group.reset();
+  m_submit_order.clear();
+
+  m_acquire_semaphores.clear();
+  m_sem_to_image.clear();
+  m_last_offscreen_slot = 0;
+}
+
 bool RenderGraph::render_frame(const Swapchain& swapchain)
 {
   // Update wall-clock timing

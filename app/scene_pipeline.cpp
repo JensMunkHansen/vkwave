@@ -11,6 +11,7 @@
 #include <vkwave/core/swapchain.h>
 #include <vkwave/pipeline/pipeline.h>
 #include <vkwave/pipeline/pbr_pass.h>
+#include <vkwave/pipeline/transmission_pass.h>
 #include <vkwave/pipeline/composite_pass.h>
 
 #include <spdlog/fmt/fmt.h>
@@ -32,13 +33,15 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
   : msaa_samples(msaa)
   , m_engine(&engine)
 {
-  // Create render passes (owned by ScenePipeline, shared with ExecutionGroups)
-  scene_renderpass = vkwave::make_scene_renderpass(
-    engine.device->device(), kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
+  // Structure-independent render passes (created once, survive rebuilds):
+  //  - composite: swapchain format, no MSAA.
+  //  - transmission: single-sample LOAD pass over HDR + shared depth.
   composite_renderpass = vkwave::make_composite_renderpass(
     engine.device->device(), engine.swapchain->image_format(), kDebug);
+  transmission_renderpass = vkwave::make_transmission_renderpass(
+    engine.device->device(), kHdrFormat, kDepthFormat, kDebug);
 
-  // Create sampler (persistent across resize)
+  // Create sampler (persistent across resize / rebuild)
   {
     vk::SamplerCreateInfo info{};
     info.magFilter = vk::Filter::eLinear;
@@ -52,58 +55,97 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
     hdr_sampler = engine.device->device().createSampler(info);
   }
 
+  // ImGui overlay -- records into the composite group's command buffer. Survives
+  // a structural rebuild (its framebuffers reference unchanged swapchain views).
+  imgui = std::make_unique<vkwave::ImGuiOverlay>(
+    engine.instance.instance(), *engine.device,
+    engine.window.get(), engine.swapchain->image_format(),
+    engine.swapchain->image_count(), kDebug);
+
+  // Build the scene graph (scene render pass, pool resources, groups, DAG,
+  // descriptors), deciding the transmission pass in from the scene's materials.
+  build_scene_graph(data);
+
+  // Overlay framebuffers reference swapchain image views -- create after build
+  imgui->create_frame_resources(*engine.swapchain, engine.swapchain->image_count());
+}
+
+void ScenePipeline::build_scene_graph(SceneData& data)
+{
+  auto& engine = *m_engine;
+  auto dev = engine.device->device();
+  auto& pool = engine.graph->resources();
+
+  // Phase-1 transmission is e1-only: a single-sample transmission pass cannot
+  // share an MSAA (multisample) depth buffer (matching sample counts within a
+  // subpass; depth resolve is a later task). So gate on glass AND no MSAA.
+  m_graph_has_transmission =
+    data.has_transmission() && msaa_samples == vk::SampleCountFlagBits::e1;
+
+  // (Re)create the scene render pass at the current MSAA. When transmission is
+  // present it LOADs this depth, so the scene pass must STORE it (not discard).
+  if (scene_renderpass)
+    dev.destroyRenderPass(scene_renderpass);
+  scene_renderpass = vkwave::make_scene_renderpass(
+    dev, kHdrFormat, kDepthFormat, kDebug, msaa_samples, m_graph_has_transmission);
+
   // Register the graph-owned, per-slot HDR target (eliminates the WAW hazard)
   // and depth buffer. Per-slot depth lets frames overlap on the GPU yet lets
-  // same-frame passes (e.g. opaque + transmission) share one depth buffer.
-  hdr_handle = engine.graph->resources().add_color("hdr_image", kHdrFormat,
+  // same-frame passes (opaque + transmission) share one depth buffer.
+  hdr_handle = pool.add_color("hdr_image", kHdrFormat,
     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled
       | vk::ImageUsageFlagBits::eTransferSrc);
-  depth_handle = engine.graph->resources().add_depth("scene_depth", kDepthFormat,
-    msaa_samples);
+  depth_handle = pool.add_depth("scene_depth", kDepthFormat, msaa_samples);
 
   // Opt-in (gate at build time, not record time): a transmissive scene needs a
   // per-slot, sampleable snapshot of the opaque HDR for the refraction pass to
-  // read. Allocate it only when there is glass — otherwise it would cost real
-  // VRAM for nothing and the DAG is identical to opaque-only. The snapshot is
-  // single-sample (the opaque HDR is already resolved) and is filled via a copy,
-  // hence eSampled | eTransferDst. Phase 1 is sharp (no mips); the roughness-blur
-  // phase will register it with a full mip chain instead. The consuming pass is
-  // added in a later slice — for now the resource is reserved, not yet sampled.
-  if (data.has_transmission())
+  // read. Allocate it only when there is glass — otherwise it costs VRAM for
+  // nothing and the DAG is identical to opaque-only. Single-sample, filled via a
+  // copy (eSampled | eTransferDst). Phase 1 is sharp (no mips).
+  snapshot_handle.reset();
+  if (m_graph_has_transmission)
   {
-    snapshot_handle = engine.graph->resources().add_color(
-      "transmission_snapshot", kHdrFormat,
+    snapshot_handle = pool.add_color("transmission_snapshot", kHdrFormat,
       vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst);
-    spdlog::info("Scene has transmissive materials — registered per-slot "
-                 "transmission snapshot resource");
+    spdlog::info("Scene has transmissive materials — transmission pass enabled");
   }
 
-  // PBR pass: renders to the graph-owned HDR target + depth
+  // PBR opaque group: renders to the graph-owned HDR target + depth.
   auto pbr_spec = vkwave::PBRPass::pipeline_spec();
   pbr_spec.existing_renderpass = scene_renderpass;
   pbr_spec.msaa_samples = msaa_samples;
-
   auto& pbr_grp = engine.graph->add_offscreen_group("pbr", pbr_spec, kHdrFormat, kDebug);
-  pbr_grp.set_color_attachment(engine.graph->resources(), hdr_handle);
-  pbr_grp.set_depth_attachment(engine.graph->resources(), depth_handle);
-
-  // Descriptor set frequency layout:
-  //   Set 0: per-frame UBO (ring-buffered, count = swapchain images) -- default
+  pbr_grp.set_color_attachment(pool, hdr_handle);
+  pbr_grp.set_depth_attachment(pool, depth_handle);
+  //   Set 0: per-frame UBO (ring-buffered) -- default
   //   Set 1: per-material textures (count = number of materials)
   //   Set 2: per-scene IBL (count = 1)
   pbr_grp.set_descriptor_count(1, data.material_count());
   pbr_grp.set_descriptor_count(2, 1);
 
-  // Composite pass: samples HDR image, tonemaps, writes to swapchain
+  // Transmission group: own pipeline + render pass + submission (Requirement #5).
+  // Renders glass into the SAME HDR target (LOAD), depth-testing against the
+  // shared opaque depth. Compact descriptor layout: set 0 UBO, set 1 material SSBO.
+  if (m_graph_has_transmission)
+  {
+    auto tr_spec = vkwave::TransmissionPass::pipeline_spec();
+    tr_spec.existing_renderpass = transmission_renderpass;
+    tr_spec.msaa_samples = vk::SampleCountFlagBits::e1;
+    auto& tr_grp = engine.graph->add_offscreen_group(
+      "transmission", tr_spec, kHdrFormat, kDebug);
+    tr_grp.set_color_attachment(pool, hdr_handle);
+    tr_grp.set_depth_attachment(pool, depth_handle);
+    tr_grp.set_descriptor_count(1, 1);  // singleton material SSBO
+  }
+
+  // Composite present group: samples HDR, tonemaps, writes to swapchain.
   auto comp_spec = vkwave::CompositePass::pipeline_spec();
   comp_spec.existing_renderpass = composite_renderpass;
-
   auto& comp_grp = engine.graph->set_present_group(
     "composite", comp_spec, engine.swapchain->image_format(), kDebug);
 
-  // Gate present based on present mode: FIFO modes are vsync'd by the driver,
-  // so always present. Non-FIFO modes gate at display refresh to avoid
-  // unnecessary acquire/present overhead.
+  // Gate present based on present mode: FIFO is vsync'd, so always present;
+  // non-FIFO gates at display refresh to avoid unnecessary acquire/present.
   auto pm = engine.swapchain->present_mode();
   bool fifo = (pm == vk::PresentModeKHR::eFifo || pm == vk::PresentModeKHR::eFifoRelaxed);
   if (fifo)
@@ -115,33 +157,37 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
       comp_grp.set_gating(vkwave::GatingMode::wall_clock, refresh);
   }
 
-  // ImGui overlay -- records into the composite group's command buffer
-  imgui = std::make_unique<vkwave::ImGuiOverlay>(
-    engine.instance.instance(), *engine.device,
-    engine.window.get(), engine.swapchain->image_format(),
-    engine.swapchain->image_count(), kDebug);
+  // Pass-dependency DAG. Without glass: composite waits on pbr. With glass:
+  // pbr -> transmission -> composite (transmission samples the opaque snapshot,
+  // composite samples the HDR after glass is drawn into it).
+  if (auto* tr = transmission_group())
+  {
+    tr->depends_on(pbr_grp);
+    comp_grp.depends_on(*tr);
+  }
+  else
+  {
+    comp_grp.depends_on(pbr_grp);
+  }
 
-  // No resize callback needed: the graph owns the HDR pool and recreates it on
-  // resize, and the pbr group re-resolves its color attachment from the pool.
-
-  // Declare the pass-dependency edge: composite consumes the pbr group's HDR
-  // output, so it waits on the pbr timeline (replaces the graph's implicit
-  // "present waits on last offscreen" default).
-  comp_grp.depends_on(pbr_grp);
-
-  // Build all frame resources
   engine.graph->build(*engine.swapchain);
 
-  // Write texture descriptors (after build allocates descriptor sets)
+  // Write descriptors (after build allocates descriptor sets). This also writes
+  // the transmission group's material SSBO when present (see upload_material_buffer).
   write_pbr_descriptors(data);
 
-  // Write HDR image descriptor to composite pass (slot 0; the per-frame record
-  // callback rebinds the correct slot each frame).
+  // HDR descriptor for composite (slot 0; the per-frame record callback rebinds
+  // the correct slot each frame).
   comp_grp.write_image_descriptor(0, "hdrImage",
-    engine.graph->resources().color_view(hdr_handle, 0), hdr_sampler);
+    pool.color_view(hdr_handle, 0), hdr_sampler);
+}
 
-  // Overlay framebuffers reference swapchain image views -- create after build
-  imgui->create_frame_resources(*engine.swapchain, engine.swapchain->image_count());
+void ScenePipeline::rebuild_graph(SceneData& data)
+{
+  // reset_structure() drains, tears down groups + pool registrations; then we
+  // re-register and rebuild for the new scene structure.
+  m_engine->graph->reset_structure();
+  build_scene_graph(data);
 }
 
 ScenePipeline::~ScenePipeline()
@@ -155,6 +201,8 @@ ScenePipeline::~ScenePipeline()
     dev.destroyRenderPass(scene_renderpass);
   if (composite_renderpass)
     dev.destroyRenderPass(composite_renderpass);
+  if (transmission_renderpass)
+    dev.destroyRenderPass(transmission_renderpass);
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +349,11 @@ void ScenePipeline::upload_material_buffer(SceneData& data)
 
   // Singleton set 2, binding 3 — one descriptor shared by every frame.
   pbr_group().write_buffer_descriptor(2, 3, material_buffer->buffer(), bytes);
+
+  // The transmission group has the same immutable SSBO at its own set 1, binding
+  // 0 (compact layout). Write it when the glass pass is present.
+  if (auto* tr = transmission_group())
+    tr->write_buffer_descriptor(1, 0, material_buffer->buffer(), bytes);
 }
 
 void ScenePipeline::write_ibl_descriptors(SceneData& data)
@@ -336,67 +389,12 @@ void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)
 void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
                                      SceneData& data)
 {
+  // Changing MSAA changes the pass set (phase-1 transmission exists only at e1),
+  // so route through the same structural rebuild as a model switch. A bespoke
+  // incremental MSAA path that also rebuilds the transmission group is a later
+  // task. The caller re-wires record callbacks afterwards (groups are new).
   msaa_samples = new_samples;
-
-  // Capture extent before destroying (the new group starts with zero extent)
-  auto& old_group = pbr_group();
-  const auto extent = old_group.extent();
-  old_group.destroy_frame_resources();
-
-  // Destroy old scene render pass
-  auto dev = m_engine->device->device();
-  if (scene_renderpass)
-  {
-    dev.destroyRenderPass(scene_renderpass);
-    scene_renderpass = VK_NULL_HANDLE;
-  }
-
-  // Create new scene render pass with updated MSAA
-  scene_renderpass = vkwave::make_scene_renderpass(
-    dev, kHdrFormat, vk::Format::eD32Sfloat, kDebug, msaa_samples);
-
-  // Create new PBR pipeline spec with updated render pass + MSAA
-  auto pbr_spec = vkwave::PBRPass::pipeline_spec();
-  pbr_spec.existing_renderpass = scene_renderpass;
-  pbr_spec.msaa_samples = msaa_samples;
-
-  // Replace the offscreen group (new pipeline + render pass reference)
-  auto& new_grp = m_engine->graph->replace_offscreen_group(
-    0, "pbr", pbr_spec, kHdrFormat, kDebug);
-
-  // Point the new group at the graph-owned HDR target (unchanged by MSAA — the
-  // single-sample HDR is the resolve/sampled target; MSAA scratch is internal).
-  const uint32_t os_depth = m_engine->graph->offscreen_depth();
-  auto& pool = m_engine->graph->resources();
-  new_grp.set_color_attachment(pool, hdr_handle);
-
-  // Depth must match the new MSAA sample count: update the pool depth and
-  // re-allocate it (the caller has drained the GPU), then bind it to the new
-  // group before its framebuffers are built.
-  pool.set_depth_samples(depth_handle, msaa_samples);
-  pool.recreate(*m_engine->device);
-  new_grp.set_depth_attachment(pool, depth_handle);
-
-  // Set descriptor counts
-  new_grp.set_descriptor_count(1, data.material_count());
-  new_grp.set_descriptor_count(2, 1);
-
-  // Rebuild frame resources for this group
-  new_grp.create_frame_resources(extent, os_depth);
-
-  // The pool re-alloc gave the HDR target fresh views; rebind composite's sampler.
-  composite_group().write_image_descriptor(
-    0, "hdrImage", pool.color_view(hdr_handle, 0), hdr_sampler);
-
-  // Re-declare the dependency edge: replace_offscreen_group built a new pbr
-  // group, so the composite group's stored predecessor pointer now dangles.
-  auto& comp_grp = composite_group();
-  comp_grp.clear_dependencies();
-  comp_grp.depends_on(new_grp);
-
-  // Rewrite descriptors
-  write_pbr_descriptors(data);
-
+  rebuild_graph(data);
   spdlog::info("MSAA changed to {}x", static_cast<int>(msaa_samples));
 }
 
@@ -432,4 +430,12 @@ vkwave::ExecutionGroup& ScenePipeline::pbr_group()
 vkwave::ExecutionGroup& ScenePipeline::composite_group()
 {
   return static_cast<vkwave::ExecutionGroup&>(m_engine->graph->present_group());
+}
+
+vkwave::ExecutionGroup* ScenePipeline::transmission_group()
+{
+  if (!m_graph_has_transmission)
+    return nullptr;
+  // Offscreen group order: 0 = pbr, 1 = transmission (added second).
+  return static_cast<vkwave::ExecutionGroup*>(&m_engine->graph->offscreen_group(1));
 }

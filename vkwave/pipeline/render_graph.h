@@ -115,6 +115,14 @@ public:
   /// Drain + recreate (for resize).
   void resize(const Swapchain& swapchain);
 
+  /// Tear the graph structure all the way down: drain, destroy all group +
+  /// pool resources, and drop the groups, present group, and pool registrations.
+  /// After this the graph is back in its pre-`add_offscreen_group()` state — the
+  /// caller re-registers pool resources, re-adds groups + dependencies, and
+  /// calls `build()`. Used when the pass set itself changes (e.g. a model switch
+  /// adds/removes the transmission pass), not for resize (which keeps structure).
+  void reset_structure();
+
   /// Run a complete frame: submit offscreen groups, conditionally acquire + present.
   /// Returns false on swapchain out-of-date (caller should resize).
   bool render_frame(const Swapchain& swapchain);

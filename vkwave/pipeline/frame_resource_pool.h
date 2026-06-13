@@ -72,6 +72,12 @@ public:
   /// so a subsequent create() re-allocates the same set.
   void destroy();
 
+  /// Destroy resources AND drop all registrations (specs/handles). Use when the
+  /// graph structure itself changes (e.g. a model switch adds/removes the
+  /// transmission snapshot) and the pool must be re-registered from scratch.
+  /// Invalidates every previously returned handle.
+  void clear_specs();
+
   [[nodiscard]] vk::ImageView color_view(ColorHandle handle, uint32_t slot) const;
   [[nodiscard]] vk::Image color_image(ColorHandle handle, uint32_t slot) const;
   [[nodiscard]] vk::Format color_format(ColorHandle handle) const;

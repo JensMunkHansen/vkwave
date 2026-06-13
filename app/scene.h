@@ -7,6 +7,7 @@
 #include <vkwave/core/fence.h>
 #include <vkwave/pipeline/composite_pass.h>
 #include <vkwave/pipeline/pbr_pass.h>
+#include <vkwave/pipeline/transmission_pass.h>
 
 #include <vulkan/vulkan.hpp>
 
@@ -30,6 +31,7 @@ struct Scene
   vkwave::PBRContext pbr_ctx{};
   vkwave::PBRPass pbr_pass{};
   vkwave::BlendPass blend_pass{};
+  vkwave::TransmissionPass transmission_pass{};
   vkwave::CompositePass composite_pass{};
 
   // Screenshot: captures from offscreen HDR image, fence-based polling,

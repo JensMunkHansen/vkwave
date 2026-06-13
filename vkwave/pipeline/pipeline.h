@@ -87,12 +87,23 @@ vk::RenderPass make_renderpass(vk::Device device, vk::Format swapchainImageForma
 
 /// Scene render pass: renders to an HDR color target (with optional MSAA + resolve).
 /// The resolved HDR image ends in eShaderReadOnlyOptimal for sampling by the composite pass.
+/// @param storeDepth keep the depth buffer after the pass (storeOp=eStore) so a
+///   later pass (transmission) can LOAD it; default discards it (eDontCare).
 vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
   vk::Format depthFormat, bool debug,
-  vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1);
+  vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1,
+  bool storeDepth = false);
 
 /// Composite render pass: single swapchain color attachment, no depth.
 vk::RenderPass make_composite_renderpass(vk::Device device, vk::Format swapchainFormat, bool debug);
+
+/// Transmission (refraction) render pass: LOADs the opaque HDR color + shared
+/// depth and draws glass on top, then leaves HDR in eShaderReadOnlyOptimal for
+/// the composite pass. Single-sample (phase 1 renders directly into the resolved
+/// HDR; MSAA interaction is a follow-up). Color: load=LOAD, initial+final
+/// eShaderReadOnlyOptimal. Depth: load=LOAD (test against opaque), no clear.
+vk::RenderPass make_transmission_renderpass(vk::Device device, vk::Format hdrFormat,
+  vk::Format depthFormat, bool debug);
 
 GraphicsPipelineOutBundle create_graphics_pipeline(
   GraphicsPipelineInBundle& specification, bool debug);

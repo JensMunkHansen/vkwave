@@ -18,7 +18,7 @@ namespace vkwave
 // Build the per-draw push constants. Per-material data now lives in the
 // GpuMaterial SSBO (indexed by material_index); this carries only the model
 // transform, the global UI toggles, and the global preview overrides.
-static PbrPushConstants fill_push_constants(
+PbrPushConstants fill_push_constants(
   const PBRContext& ctx, const glm::mat4& model, uint32_t material_index)
 {
   PbrPushConstants pc{};
@@ -142,6 +142,10 @@ void PBRPass::record(vk::CommandBuffer cmd) const
     if (prim.materialIndex >= ctx->material_count) continue;
     auto& mat = ctx->materials[prim.materialIndex];
     if (mat.alphaMode == AlphaMode::Blend) continue;
+    // Transmissive prims are drawn by the transmission pass; skip here so we
+    // don't write depth (which would block the transmission redraw) or bake the
+    // glass into the background snapshot.
+    if (ctx->defer_transmissive && mat.transmissionFactor > 0.0f) continue;
 
     if (prim.materialIndex != bound_material)
     {
@@ -187,7 +191,10 @@ void BlendPass::record(vk::CommandBuffer cmd) const
   {
     auto& prim = ctx->primitives[i];
     if (prim.materialIndex >= ctx->material_count) continue;
-    if (ctx->materials[prim.materialIndex].alphaMode == AlphaMode::Blend)
+    auto& mat = ctx->materials[prim.materialIndex];
+    // Transmissive prims belong to the transmission pass, even if also BLEND.
+    if (ctx->defer_transmissive && mat.transmissionFactor > 0.0f) continue;
+    if (mat.alphaMode == AlphaMode::Blend)
       transparent_indices.push_back(i);
   }
 

@@ -2,6 +2,7 @@
 
 #include <vkwave/core/mesh.h>
 #include <vkwave/core/pass.h>
+#include <vkwave/core/pbr_ubo.h>
 #include <vkwave/pipeline/pipeline.h>
 
 #include <glm/glm.hpp>
@@ -28,6 +29,12 @@ struct PBRContext
   uint32_t primitive_count{ 0 };
   uint32_t material_count{ 0 };
   bool has_transparent{ false };
+
+  // When true, the transmission pass owns transmissive primitives
+  // (transmissionFactor > 0), so the opaque/blend passes skip them — they would
+  // otherwise write depth and block the transmission redraw, and pollute the
+  // background snapshot. Set by the app when a transmission group is present.
+  bool defer_transmissive{ false };
 
   // Camera (updated per-frame by Scene::update)
   glm::mat4 view_projection{ 1.0f };
@@ -114,5 +121,11 @@ struct BlendPass : Pass<BlendPass>
 
 static_assert(std::is_trivially_destructible_v<BlendPass>,
   "BlendPass must be trivially destructible");
+
+/// Fill the shared PBR push constants (model transform, global UI flags/overrides)
+/// for a draw. Shared with TransmissionPass, which reuses the same push-constant
+/// block via pbr.vert.
+PbrPushConstants fill_push_constants(
+  const PBRContext& ctx, const glm::mat4& model, uint32_t material_index);
 
 } // namespace vkwave
