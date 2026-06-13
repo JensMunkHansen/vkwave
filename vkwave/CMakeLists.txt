@@ -64,6 +64,7 @@ add_library(${TARGET_NAME}
   pipeline/composite_pass.cpp
   pipeline/submission_group.cpp
   pipeline/execution_group.cpp
+  pipeline/frame_resource_pool.cpp
   pipeline/imgui_overlay.cpp
   pipeline/render_graph.cpp
   pipeline/acceleration_structure.cpp

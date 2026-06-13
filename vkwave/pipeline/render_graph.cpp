@@ -100,6 +100,10 @@ void RenderGraph::build(const Swapchain& swapchain)
   }
   m_sem_to_image.assign(m_swapchain_image_count, UINT32_MAX);
 
+  // Create graph-owned per-slot resources before the groups, since group
+  // framebuffers reference them.
+  m_resources.create(m_device, swapchain.extent(), os_depth);
+
   // Create offscreen group resources (independent of swapchain)
   for (auto& group : m_offscreen_groups)
   {
@@ -155,6 +159,9 @@ void RenderGraph::resize(const Swapchain& swapchain)
   // Destroy offscreen group resources
   for (auto& group : m_offscreen_groups)
     group->destroy_frame_resources();
+
+  // Destroy graph-owned resources (recreated by build() at the new extent).
+  m_resources.destroy();
 
   m_acquire_semaphores.clear();
   m_sem_to_image.clear();
