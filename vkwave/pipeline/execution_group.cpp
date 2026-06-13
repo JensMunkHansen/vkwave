@@ -171,6 +171,13 @@ void ExecutionGroup::set_color_attachment(
   m_color_handle = handle;
 }
 
+void ExecutionGroup::set_depth_attachment(
+  const FrameResourcePool& pool, FrameResourcePool::DepthHandle handle)
+{
+  m_depth_pool = &pool;
+  m_depth_handle = handle;
+}
+
 void ExecutionGroup::create_frame_resources(
   const Swapchain& swapchain, uint32_t count)
 {
@@ -209,8 +216,9 @@ void ExecutionGroup::create_frame_resources_internal(
 {
   const bool msaa = m_msaa_samples != vk::SampleCountFlagBits::e1;
 
-  // Create depth buffer if enabled (matches MSAA sample count)
-  if (m_depth_enabled)
+  // Depth: prefer a graph-owned pool depth (per slot); otherwise create an
+  // owned single depth buffer (legacy path for groups without a pool depth).
+  if (m_depth_enabled && !m_depth_pool)
   {
     m_depth_buffer = std::make_unique<DepthStencilAttachment>(
       m_device, m_depth_format, extent, m_msaa_samples);
@@ -233,10 +241,15 @@ void ExecutionGroup::create_frame_resources_internal(
   // Attachment order matches make_scene_renderpass():
   //   MSAA:     [msaa_color, depth, resolve]
   //   No MSAA:  [color, depth]
-  auto depth_view = m_depth_buffer ? m_depth_buffer->combined_view() : VK_NULL_HANDLE;
-
   for (uint32_t i = 0; i < count; ++i)
   {
+    // Per-slot depth from the pool when set, else the single owned buffer.
+    vk::ImageView depth_view = VK_NULL_HANDLE;
+    if (m_depth_pool)
+      depth_view = m_depth_pool->depth_view(m_depth_handle, i);
+    else if (m_depth_buffer)
+      depth_view = m_depth_buffer->combined_view();
+
     std::vector<vk::ImageView> attachments;
     if (msaa)
     {

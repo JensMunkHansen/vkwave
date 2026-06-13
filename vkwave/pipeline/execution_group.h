@@ -88,6 +88,11 @@ class ExecutionGroup : public SubmissionGroup
   const FrameResourcePool* m_color_pool{ nullptr };
   FrameResourcePool::ColorHandle m_color_handle{ 0 };
 
+  // Graph-owned pool depth attachment (when set, resolved per slot instead of
+  // creating an owned m_depth_buffer).
+  const FrameResourcePool* m_depth_pool{ nullptr };
+  FrameResourcePool::DepthHandle m_depth_handle{ 0 };
+
   // Clear values for render pass begin
   std::vector<vk::ClearValue> m_clear_values;
 
@@ -129,6 +134,12 @@ public:
   /// the pool on resize with no external re-push. Call before create_frame_resources().
   void set_color_attachment(const FrameResourcePool& pool,
                             FrameResourcePool::ColorHandle handle);
+
+  /// Use a graph-owned pool depth resource as this group's depth attachment,
+  /// resolved per slot at framebuffer-creation time, instead of an owned depth
+  /// buffer. The pool depth's sample count must match this group's MSAA.
+  void set_depth_attachment(const FrameResourcePool& pool,
+                            FrameResourcePool::DepthHandle handle);
 
   /// Create/recreate size-dependent resources (framebuffers, depth buffer, UBOs, descriptors).
   void create_frame_resources(const Swapchain& swapchain, uint32_t count) override;

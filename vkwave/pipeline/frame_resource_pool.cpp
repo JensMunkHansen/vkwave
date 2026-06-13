@@ -54,6 +54,19 @@ void FrameResourcePool::create(
   }
 }
 
+void FrameResourcePool::recreate(const Device& device)
+{
+  if (m_count > 0)
+    create(device, m_extent, m_count);
+}
+
+void FrameResourcePool::set_depth_samples(
+  DepthHandle handle, vk::SampleCountFlagBits samples)
+{
+  assert(handle < m_depth_specs.size());
+  m_depth_specs[handle].samples = samples;
+}
+
 void FrameResourcePool::destroy()
 {
   m_color.clear();

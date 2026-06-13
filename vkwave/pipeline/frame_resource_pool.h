@@ -56,6 +56,14 @@ public:
   /// (Re)create all registered resources at the given extent and slot count.
   void create(const Device& device, vk::Extent2D extent, uint32_t count);
 
+  /// Re-allocate all resources at the current extent/slot count — e.g. after a
+  /// depth sample-count change. The GPU must be idle. No-op before create().
+  void recreate(const Device& device);
+
+  /// Update a depth resource's MSAA sample count (must match the consuming
+  /// group's MSAA). Takes effect on the next create()/recreate().
+  void set_depth_samples(DepthHandle handle, vk::SampleCountFlagBits samples);
+
   /// Destroy all per-slot resources. Registration (specs/handles) is retained
   /// so a subsequent create() re-allocates the same set.
   void destroy();

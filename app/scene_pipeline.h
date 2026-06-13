@@ -18,11 +18,13 @@ struct ScenePipeline
 {
   static constexpr vk::Format kHdrFormat = vk::Format::eR16G16B16A16Sfloat;
 
-  // Graph-owned HDR color target (one per slot), referenced by handle.
+  // Graph-owned HDR color target + depth (one per slot), referenced by handle.
   vkwave::FrameResourcePool::ColorHandle hdr_handle{ 0 };
+  vkwave::FrameResourcePool::DepthHandle depth_handle{ 0 };
   vk::Sampler hdr_sampler{ VK_NULL_HANDLE };
   vk::RenderPass scene_renderpass{ VK_NULL_HANDLE };
   vk::RenderPass composite_renderpass{ VK_NULL_HANDLE };
+  static constexpr vk::Format kDepthFormat = vk::Format::eD32Sfloat;
   vk::SampleCountFlagBits msaa_samples{ vk::SampleCountFlagBits::e1 };
   std::unique_ptr<vkwave::ImGuiOverlay> imgui;
 
