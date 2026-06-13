@@ -77,21 +77,34 @@ Only `KHR_materials_transmission` (specular) drives `transmissionFactor`.
 `KHR_materials_diffuse_transmission` is translucency/SSS — captured separately,
 **not** routed into this pass (conflating them dropped LowerJawScan's colors).
 
+**Per-pixel transmission — done.** `transmissionFactor` is multiplied by the
+`transmissionTexture` R channel (per-material, set 2), so only the textured
+regions refract (e.g. TransmissionTest's pattern); the rest stays opaque. White
+fallback for materials without a mask. Mask is sampled with UV0 (texture-transform
+/ UV1 on the mask is a refinement).
+
+**IBL Fresnel reflection — done.** The glass reflects the prefiltered environment
+cubemap along `reflect(-V, N)` at the Fresnel rim (sharp, mip 0) instead of flat
+white, so it mirrors its surroundings at grazing angles.
+
 ### Follow-ups (next iterations)
 
-1. **Roughness blur (phase 2)** — sample the snapshot at a mip selected by
-   roughness, for frosted glass. Needs a mip chain on the snapshot (the pool can
-   already allocate `full_mips`) + a downsample (reuse F4 mip-gen / F2 compute).
-2. **Per-pixel transmission** via `transmissionTexture` — currently the whole
-   primitive is treated as uniformly transmissive; the texture makes only parts
-   transparent.
+1. **Roughness blur (phase 2)** — sample the snapshot (and the env reflection) at
+   a mip selected by roughness, for frosted glass. Needs a mip chain on the
+   snapshot (the pool can already allocate `full_mips`) + a downsample (reuse F4
+   mip-gen / F2 compute). The bigger remaining item.
+2. **Mask UV-set / texture-transform** — the transmission mask is sampled with
+   UV0 + no transform; honor TEXCOORD_1 / KHR_texture_transform like the PBR
+   textures for masks that need it.
 3. **MSAA + glass** — the transmission pass is single-sample only, because it
    can't share the multisample opaque depth. A depth-resolve (MSAA depth →
    single-sample) would let glass coexist with MSAA.
 4. **Shared MSAA scratch** — the intra-pass MSAA color/depth scratch is
    ring-buffered per slot, but it's written-and-resolved within one serialized
    scene pass and never read across frames, so a single shared copy would cut
-   MSAA memory by the ring depth (today capped at 4 in flight).
+   MSAA memory by the ring depth (today capped at 4 in flight). Confirmed to need
+   no new sync — the existing per-frame fence + render-pass external dependency
+   already order the cross-frame scratch reuse.
 
 ## Cheaper alternative (rejected for correctness)
 
