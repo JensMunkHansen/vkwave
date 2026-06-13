@@ -44,9 +44,13 @@ public:
 
   /// Register a per-slot color image (e.g. an HDR render target). Declared
   /// once; allocated on create(). Returns a stable handle.
+  /// @param full_mips allocate a full mip chain (for roughness-blurred sampling,
+  ///                  e.g. the transmission snapshot). Mip count is derived from
+  ///                  the extent at create()/recreate() time.
   ColorHandle add_color(std::string name, vk::Format format,
     vk::ImageUsageFlags usage,
-    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1);
+    vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1,
+    bool full_mips = false);
 
   /// Register a per-slot depth(-stencil) attachment.
   DepthHandle add_depth(std::string name, vk::Format format,
@@ -71,6 +75,7 @@ public:
   [[nodiscard]] vk::ImageView color_view(ColorHandle handle, uint32_t slot) const;
   [[nodiscard]] vk::Image color_image(ColorHandle handle, uint32_t slot) const;
   [[nodiscard]] vk::Format color_format(ColorHandle handle) const;
+  [[nodiscard]] uint32_t color_mip_levels(ColorHandle handle, uint32_t slot) const;
 
   /// Depth attachment view (combined depth+stencil aspect, for framebuffers).
   [[nodiscard]] vk::ImageView depth_view(DepthHandle handle, uint32_t slot) const;
@@ -86,6 +91,7 @@ private:
     vk::Format format;
     vk::ImageUsageFlags usage;
     vk::SampleCountFlagBits samples;
+    bool full_mips;
   };
   struct DepthSpec
   {

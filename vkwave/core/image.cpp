@@ -10,18 +10,23 @@ namespace vkwave
 
 Image::Image(const Device& device, vk::Format format, vk::Extent2D extent,
   vk::ImageUsageFlags usage, const std::string& name,
-  vk::SampleCountFlagBits samples)
+  vk::SampleCountFlagBits samples, uint32_t mip_levels)
   : m_device(device.device()), m_format(format), m_extent(extent)
+  , m_mip_levels(mip_levels)
 {
-  // Multisample images are transient (content discarded after resolve)
+  // Multisample images are transient (content discarded after resolve) and
+  // cannot have mip levels.
   if (samples != vk::SampleCountFlagBits::e1)
+  {
     usage |= vk::ImageUsageFlagBits::eTransientAttachment;
+    m_mip_levels = 1;
+  }
 
   // Create image
   vk::ImageCreateInfo image_info{};
   image_info.imageType = vk::ImageType::e2D;
   image_info.extent = vk::Extent3D{ extent.width, extent.height, 1 };
-  image_info.mipLevels = 1;
+  image_info.mipLevels = m_mip_levels;
   image_info.arrayLayers = 1;
   image_info.format = format;
   image_info.tiling = vk::ImageTiling::eOptimal;
@@ -49,7 +54,7 @@ Image::Image(const Device& device, vk::Format format, vk::Extent2D extent,
   view_info.format = format;
   view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
   view_info.subresourceRange.baseMipLevel = 0;
-  view_info.subresourceRange.levelCount = 1;
+  view_info.subresourceRange.levelCount = m_mip_levels;
   view_info.subresourceRange.baseArrayLayer = 0;
   view_info.subresourceRange.layerCount = 1;
 
@@ -74,6 +79,7 @@ Image::Image(Image&& other) noexcept
   , m_view(std::exchange(other.m_view, VK_NULL_HANDLE))
   , m_format(other.m_format)
   , m_extent(other.m_extent)
+  , m_mip_levels(other.m_mip_levels)
 {
 }
 
@@ -88,6 +94,7 @@ Image& Image::operator=(Image&& other) noexcept
     m_view = std::exchange(other.m_view, VK_NULL_HANDLE);
     m_format = other.m_format;
     m_extent = other.m_extent;
+    m_mip_levels = other.m_mip_levels;
   }
   return *this;
 }

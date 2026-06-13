@@ -4,16 +4,18 @@
 
 #include <spdlog/fmt/fmt.h>
 
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 
 namespace vkwave
 {
 
 FrameResourcePool::ColorHandle FrameResourcePool::add_color(
   std::string name, vk::Format format, vk::ImageUsageFlags usage,
-  vk::SampleCountFlagBits samples)
+  vk::SampleCountFlagBits samples, bool full_mips)
 {
-  m_color_specs.push_back({ std::move(name), format, usage, samples });
+  m_color_specs.push_back({ std::move(name), format, usage, samples, full_mips });
   return static_cast<ColorHandle>(m_color_specs.size() - 1);
 }
 
@@ -36,10 +38,14 @@ void FrameResourcePool::create(
   for (size_t h = 0; h < m_color_specs.size(); ++h)
   {
     const auto& spec = m_color_specs[h];
+    const uint32_t mips = spec.full_mips
+      ? static_cast<uint32_t>(
+          std::floor(std::log2(std::max(extent.width, extent.height)))) + 1
+      : 1;
     m_color[h].reserve(count);
     for (uint32_t i = 0; i < count; ++i)
       m_color[h].emplace_back(device, spec.format, extent, spec.usage,
-        fmt::format("{}_{}", spec.name, i), spec.samples);
+        fmt::format("{}_{}", spec.name, i), spec.samples, mips);
   }
 
   m_depth.clear();
@@ -90,6 +96,12 @@ vk::Format FrameResourcePool::color_format(ColorHandle handle) const
 {
   assert(handle < m_color_specs.size());
   return m_color_specs[handle].format;
+}
+
+uint32_t FrameResourcePool::color_mip_levels(ColorHandle handle, uint32_t slot) const
+{
+  assert(handle < m_color.size() && slot < m_color[handle].size());
+  return m_color[handle][slot].mip_levels();
 }
 
 vk::ImageView FrameResourcePool::depth_view(DepthHandle handle, uint32_t slot) const

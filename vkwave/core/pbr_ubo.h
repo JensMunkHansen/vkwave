@@ -71,11 +71,19 @@ struct GpuMaterial
   // KHR_texture_transform per texture slot, precomputed affine (xform_identity
   // by default). Two vec4 per slot: [2*s] = packed mat2 (col0.xy, col1.xy),
   // [2*s+1].xy = UV offset. uv' = mat2(a.xy, a.zw) * uv + off.
-  glm::vec4 texXform[18];            // 9 slots × 2 vec4 = 288 bytes
-};                                   // 352 bytes total (std430 stride)
+  glm::vec4 texXform[18];            // 9 slots × 2 vec4 = 288 bytes  (offset 64..352)
 
-static_assert(sizeof(GpuMaterial) == 352,
-  "GpuMaterial must be 352 bytes to match std430 SSBO layout");
+  // KHR_materials_transmission / _ior / _volume. Data only for now — the
+  // transmission pass/shader that consumes these lands in a later step.
+  float transmissionFactor{ 0.0f };  // offset 352
+  float ior{ 1.5f };                 // offset 356
+  float thicknessFactor{ 0.0f };     // offset 360
+  float _pad3{ 0.0f };               // offset 364 — pad attenuation to vec4 alignment
+  glm::vec4 attenuation{ 1.0f, 1.0f, 1.0f, 0.0f }; // offset 368 — rgb=color, w=distance (0=infinite)
+};                                   // 384 bytes total (std430 stride)
+
+static_assert(sizeof(GpuMaterial) == 384,
+  "GpuMaterial must be 384 bytes to match std430 SSBO layout");
 
 /// Set a GpuMaterial's texture transforms to identity (no-op). Required because
 /// a zero-initialized transform would collapse all UVs to (0,0).
