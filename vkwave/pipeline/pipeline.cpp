@@ -168,7 +168,7 @@ vk::RenderPass make_renderpass(vk::Device device, vk::Format swapchainImageForma
 
 vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
   vk::Format depthFormat, bool debug,
-  vk::SampleCountFlagBits msaaSamples)
+  vk::SampleCountFlagBits msaaSamples, bool storeDepth)
 {
   const bool msaa = msaaSamples != vk::SampleCountFlagBits::e1;
   std::vector<vk::AttachmentDescription> attachments;
@@ -192,7 +192,9 @@ vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
   depthAttachment.format = depthFormat;
   depthAttachment.samples = msaaSamples;
   depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-  depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+  // Store depth when a later pass (transmission) will LOAD it; otherwise discard.
+  depthAttachment.storeOp = storeDepth
+    ? vk::AttachmentStoreOp::eStore : vk::AttachmentStoreOp::eDontCare;
   depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eClear;
   depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eStore;
   depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
@@ -255,6 +257,85 @@ vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
   {
     if (debug)
       std::cout << "Failed to create scene renderpass!" << std::endl;
+  }
+  return nullptr;
+}
+
+vk::RenderPass make_transmission_renderpass(vk::Device device, vk::Format hdrFormat,
+  vk::Format depthFormat, bool debug)
+{
+  std::vector<vk::AttachmentDescription> attachments;
+
+  // Attachment 0: HDR color — LOAD the opaque result, draw glass on top, keep it
+  // sampleable for composite (stays ShaderReadOnly on entry and exit; the render
+  // pass transitions it to ColorAttachmentOptimal internally for the draws).
+  vk::AttachmentDescription colorAttachment{};
+  colorAttachment.format = hdrFormat;
+  colorAttachment.samples = vk::SampleCountFlagBits::e1;
+  colorAttachment.loadOp = vk::AttachmentLoadOp::eLoad;
+  colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+  colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+  colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+  colorAttachment.initialLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  colorAttachment.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  attachments.push_back(colorAttachment);
+
+  // Attachment 1: shared depth — LOAD the opaque depth so glass is occluded by
+  // opaque geometry. Not stored (only used for testing within this pass).
+  vk::AttachmentDescription depthAttachment{};
+  depthAttachment.format = depthFormat;
+  depthAttachment.samples = vk::SampleCountFlagBits::e1;
+  depthAttachment.loadOp = vk::AttachmentLoadOp::eLoad;
+  depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+  depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+  depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+  depthAttachment.initialLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+  depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+  attachments.push_back(depthAttachment);
+
+  vk::AttachmentReference colorRef{ 0, vk::ImageLayout::eColorAttachmentOptimal };
+  vk::AttachmentReference depthRef{ 1, vk::ImageLayout::eDepthStencilAttachmentOptimal };
+
+  vk::SubpassDescription subpass{};
+  subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
+  subpass.colorAttachmentCount = 1;
+  subpass.pColorAttachments = &colorRef;
+  subpass.pDepthStencilAttachment = &depthRef;
+
+  // External dependency: the snapshot copy left HDR ShaderReadOnly via a transfer
+  // write, and opaque wrote depth. Wait on both before the load/transition.
+  vk::SubpassDependency dependency{};
+  dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+  dependency.dstSubpass = 0;
+  dependency.srcStageMask =
+    vk::PipelineStageFlagBits::eColorAttachmentOutput |
+    vk::PipelineStageFlagBits::eEarlyFragmentTests | vk::PipelineStageFlagBits::eTransfer;
+  dependency.srcAccessMask = vk::AccessFlagBits::eNone;
+  dependency.dstStageMask =
+    vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+  // loadOp=LOAD reads the existing color content during the layout transition, so
+  // the dst scope must include COLOR_ATTACHMENT_READ (not just WRITE) — sync
+  // validation flags the LOAD read-after-write otherwise.
+  dependency.dstAccessMask =
+    vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eColorAttachmentRead |
+    vk::AccessFlagBits::eDepthStencilAttachmentRead;
+
+  vk::RenderPassCreateInfo rpInfo{};
+  rpInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+  rpInfo.pAttachments = attachments.data();
+  rpInfo.subpassCount = 1;
+  rpInfo.pSubpasses = &subpass;
+  rpInfo.dependencyCount = 1;
+  rpInfo.pDependencies = &dependency;
+
+  try
+  {
+    return device.createRenderPass(rpInfo);
+  }
+  catch (vk::SystemError err)
+  {
+    if (debug)
+      std::cout << "Failed to create transmission renderpass!" << std::endl;
   }
   return nullptr;
 }

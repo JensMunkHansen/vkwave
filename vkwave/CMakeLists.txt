@@ -61,6 +61,7 @@ add_library(${TARGET_NAME}
   pipeline/triangle_pass.cpp
   pipeline/cube_pass.cpp
   pipeline/pbr_pass.cpp
+  pipeline/transmission_pass.cpp
   pipeline/composite_pass.cpp
   pipeline/submission_group.cpp
   pipeline/execution_group.cpp

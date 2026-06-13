@@ -7,6 +7,7 @@
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cassert>
 #include <unordered_map>
 
@@ -89,7 +90,14 @@ ExecutionGroup& RenderGraph::set_present_group(
 
 uint32_t RenderGraph::offscreen_depth() const
 {
-  return m_offscreen_depth > 0 ? m_offscreen_depth : m_swapchain_image_count;
+  // The offscreen ring depth (per-slot copies of HDR/depth/MSAA-scratch/etc.) is
+  // capped well below the swapchain image count: one graphics queue means >4
+  // frames in flight buys no real overlap, only multiplies VRAM — e.g. 8 copies
+  // of 8x MSAA scratch at fullscreen OOMs. Override with --frames-in-flight.
+  constexpr uint32_t kDefaultMaxInFlight = 4;
+  return m_offscreen_depth > 0
+    ? m_offscreen_depth
+    : std::min(m_swapchain_image_count, kDefaultMaxInFlight);
 }
 
 void RenderGraph::build(const Swapchain& swapchain)
@@ -178,6 +186,39 @@ void RenderGraph::resize(const Swapchain& swapchain)
     m_resize_fn(swapchain.extent());
 
   build(swapchain);
+}
+
+void RenderGraph::remove_last_offscreen_group()
+{
+  if (m_offscreen_groups.empty())
+    return;
+  drain();
+  m_offscreen_groups.back()->destroy_frame_resources();
+  m_offscreen_groups.pop_back();
+  // Size now mismatches m_submit_order, so render_frame falls back to identity
+  // (insertion) order — which still respects the pbr->transmission edge.
+  m_submit_order.clear();
+}
+
+void RenderGraph::reset_structure()
+{
+  drain();
+
+  for (auto& group : m_offscreen_groups)
+    group->destroy_frame_resources();
+  if (m_present_group)
+    m_present_group->destroy_frame_resources();
+
+  m_resources.destroy();
+  m_resources.clear_specs();
+
+  m_offscreen_groups.clear();
+  m_present_group.reset();
+  m_submit_order.clear();
+
+  m_acquire_semaphores.clear();
+  m_sem_to_image.clear();
+  m_last_offscreen_slot = 0;
 }
 
 bool RenderGraph::render_frame(const Swapchain& swapchain)

@@ -140,8 +140,16 @@ struct SceneMaterial
   glm::vec3 attenuationColor{1.0f};
   float attenuationDistance{0.0f};  // 0 = infinite (no attenuation)
 
-  // KHR_materials_transmission (proxy for diffuse_transmission)
+  // KHR_materials_transmission — SPECULAR transmission (refractive glass). This
+  // is what the transmission/refraction pass keys on. Set ONLY from the
+  // KHR_materials_transmission extension, never from diffuse transmission or
+  // volume (those are translucency/SSS — a different effect and a future pass).
   float transmissionFactor{0.0f};
+
+  // KHR_materials_diffuse_transmission — light SCATTERS through the surface
+  // (translucency: skin, wax, leaves). Captured for a future SSS/translucency
+  // pass; deliberately NOT mapped onto transmissionFactor (it is not refraction).
+  float diffuseTransmissionFactor{0.0f};
 
   // KHR_materials_ior — index of refraction (default 1.5 dielectric).
   float ior{1.5f};

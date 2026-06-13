@@ -80,6 +80,14 @@ void FrameResourcePool::destroy()
   m_count = 0;
 }
 
+void FrameResourcePool::clear_specs()
+{
+  destroy();
+  m_color_specs.clear();
+  m_depth_specs.clear();
+  m_extent = vk::Extent2D{};
+}
+
 vk::ImageView FrameResourcePool::color_view(ColorHandle handle, uint32_t slot) const
 {
   assert(handle < m_color.size() && slot < m_color[handle].size());

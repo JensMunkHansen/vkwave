@@ -15,6 +15,7 @@ struct AppConfig
   std::string preferred_gpu;
   std::string present_mode{ "mailbox" }; // "immediate", "mailbox", "fifo", "fifo_relaxed"
   uint32_t swapchain_images{ 0 };        // 0 = driver default
+  uint32_t frames_in_flight{ 0 };        // offscreen ring depth (0 = swapchain count). Lower = less VRAM at high MSAA.
 
   // [window]
   std::string window_title{ "vkwave" };

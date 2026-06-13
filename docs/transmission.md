@@ -61,6 +61,38 @@ never per frame.
 3. **Async compute** — move the snapshot mip generation onto the dedicated
    compute queue (F2), overlapping it with the next frame's graphics work.
 
+## Implementation status
+
+**Phase 1 (sharp transmission) — done.** The transmission pass is its own
+`ExecutionGroup` + submission, ordered `pbr → transmission → composite` via the
+DAG. It draws only transmissive primitives (the opaque/blend passes skip them via
+`PBRContext::defer_transmissive`) into the HDR, depth-testing against the stored
+opaque depth. The opaque HDR is snapshotted per-slot before the glass draws; the
+shader samples it at an IOR/thickness-bent screen coordinate with Beer-Lambert
+absorption + a Fresnel rim. Opt-in is gated at build time and re-evaluated on
+model switch (structural rebuild); the snapshot resource persists for any glass
+scene so an MSAA toggle only adds/removes the *group*.
+
+Only `KHR_materials_transmission` (specular) drives `transmissionFactor`.
+`KHR_materials_diffuse_transmission` is translucency/SSS — captured separately,
+**not** routed into this pass (conflating them dropped LowerJawScan's colors).
+
+### Follow-ups (next iterations)
+
+1. **Roughness blur (phase 2)** — sample the snapshot at a mip selected by
+   roughness, for frosted glass. Needs a mip chain on the snapshot (the pool can
+   already allocate `full_mips`) + a downsample (reuse F4 mip-gen / F2 compute).
+2. **Per-pixel transmission** via `transmissionTexture` — currently the whole
+   primitive is treated as uniformly transmissive; the texture makes only parts
+   transparent.
+3. **MSAA + glass** — the transmission pass is single-sample only, because it
+   can't share the multisample opaque depth. A depth-resolve (MSAA depth →
+   single-sample) would let glass coexist with MSAA.
+4. **Shared MSAA scratch** — the intra-pass MSAA color/depth scratch is
+   ring-buffered per slot, but it's written-and-resolved within one serialized
+   scene pass and never read across frames, so a single shared copy would cut
+   MSAA memory by the ring depth (today capped at 4 in flight).
+
 ## Cheaper alternative (rejected for correctness)
 
 Transmissive materials could be treated as plain alpha-blend (constant tint,

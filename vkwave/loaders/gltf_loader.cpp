@@ -1130,56 +1130,39 @@ void traverse_nodes(
           if (primitive.material->has_ior)
             scene_mat.ior = primitive.material->ior.ior;
 
-          // KHR_materials_diffuse_transmission — not natively supported by cgltf,
-          // so we parse the raw extension JSON from material->extensions[].
-          // Uses diffuseTransmissionFactor as our transmissionFactor.
-          if (scene_mat.transmissionFactor == 0.0f)
+          // KHR_materials_diffuse_transmission — TRANSLUCENCY (light scatters
+          // through the surface), NOT specular refraction. cgltf doesn't parse it
+          // natively, so read the raw extension JSON. Captured into its own field
+          // for a future SSS/translucency pass — it must NOT drive
+          // transmissionFactor (doing so routed e.g. LowerJawScan into the glass
+          // pass and dropped its vertex colors).
+          for (cgltf_size ei = 0; ei < primitive.material->extensions_count; ++ei)
           {
-            for (cgltf_size ei = 0; ei < primitive.material->extensions_count; ++ei)
+            const auto& ext = primitive.material->extensions[ei];
+            if (ext.name
+                && std::string_view(ext.name) == "KHR_materials_diffuse_transmission"
+                && ext.data)
             {
-              const auto& ext = primitive.material->extensions[ei];
-              if (ext.name
-                  && std::string_view(ext.name) == "KHR_materials_diffuse_transmission"
-                  && ext.data)
+              std::string_view json(ext.data);
+              auto pos = json.find("\"diffuseTransmissionFactor\"");
+              if (pos != std::string_view::npos)
               {
-                // Minimal JSON parse: find "diffuseTransmissionFactor" : <number>
-                std::string_view json(ext.data);
-                auto pos = json.find("\"diffuseTransmissionFactor\"");
+                pos = json.find(':', pos);
                 if (pos != std::string_view::npos)
                 {
-                  pos = json.find(':', pos);
-                  if (pos != std::string_view::npos)
-                  {
-                    float val = 0.0f;
-                    auto start = json.find_first_of("0123456789.-", pos + 1);
-                    if (start != std::string_view::npos)
-                    {
-                      val = std::stof(std::string(json.substr(start)));
-                    }
-                    scene_mat.transmissionFactor = val;
-                    spdlog::info("  KHR_materials_diffuse_transmission: factor={:.3f}",
-                      val);
-                  }
+                  auto start = json.find_first_of("0123456789.-", pos + 1);
+                  if (start != std::string_view::npos)
+                    scene_mat.diffuseTransmissionFactor =
+                      std::stof(std::string(json.substr(start)));
                 }
-                else
-                {
-                  // Extension present but no factor → default 0.0 per spec
-                  // (non-zero means some diffuse transmission)
-                  scene_mat.transmissionFactor = 1.0f;
-                }
-                break;
               }
+              else
+              {
+                // Extension present but no factor → spec default 0.0.
+                scene_mat.diffuseTransmissionFactor = 0.0f;
+              }
+              break;
             }
-          }
-
-          // Fallback: volume with thickness but no transmission of any kind →
-          // treat as transmissive, but flag the shader to derive per-pixel
-          // transmission from the thickness texture instead of using a scalar.
-          if (primitive.material->has_volume && scene_mat.transmissionFactor == 0.0f
-              && primitive.material->volume.thickness_factor > 0.0f)
-          {
-            scene_mat.transmissionFactor = 1.0f;
-            scene_mat.deriveTransmissionFromThickness = true;
           }
 
           // KHR_materials_volume

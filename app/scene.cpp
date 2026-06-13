@@ -77,6 +77,15 @@ void Scene::wire_pbr_context()
   pbr_pass.ctx = &pbr_ctx;
   blend_pass.ctx = &pbr_ctx;
   composite_pass.group = &pipeline->composite_group();
+
+  // Transmission shares the scene context; its group is present only for glass.
+  transmission_pass.ctx = &pbr_ctx;
+  transmission_pass.group = pipeline->transmission_group();
+
+  // When the transmission pass is present it owns transmissive prims, so the
+  // opaque/blend passes must skip them (else they write depth + pollute the
+  // snapshot). Without the pass (e.g. MSAA on), glass falls back to opaque.
+  pbr_ctx.defer_transmissive = (transmission_pass.group != nullptr);
 }
 
 void Scene::wire_record_callbacks()
@@ -87,15 +96,47 @@ void Scene::wire_record_callbacks()
       blend_pass.record(cmd);
     });
 
-  // PBR post-record: snapshot copy (glass) + HDR→buffer copy (screenshots).
-  // Runs after endRenderPass(), before cmd.end(), same command buffer — so no
-  // extra vkQueueSubmit.
+  // Screenshot copy: capture the HDR into the readback buffer and arm the
+  // per-slot fence on `group` (the submission that contains the copy). Must run
+  // on the LAST offscreen group that writes the HDR so the glass pass is
+  // included — otherwise a glass scene would screenshot the pre-transmission HDR.
+  auto record_screenshot = [this](vk::CommandBuffer cmd, vkwave::ExecutionGroup& group) {
+    if (!screenshot_requested || screenshot_in_flight || screenshot_compressing)
+      return;
+    if (!screenshot_readback)
+      return; // buffer not yet allocated — will be ready next frame
+
+    auto extent = group.extent();
+    vk::DeviceSize needed = static_cast<vk::DeviceSize>(extent.width) * extent.height * 8;
+    if (screenshot_readback->size() < needed)
+      return; // buffer too small — will grow next frame
+
+    auto slot = m_engine->graph->last_offscreen_slot();
+    auto hdr_image = m_engine->graph->resources().color_image(pipeline->hdr_handle, slot);
+    record_hdr_screenshot_copy(cmd, hdr_image, extent, screenshot_readback->buffer());
+
+    // Arm the fence — only this copy is serialized, frames keep pipelining
+    screenshot_fence->reset();
+    group.set_next_fence(screenshot_fence->get());
+
+    screenshot_requested = false;
+    screenshot_in_flight = true;
+    screenshot_extent = extent;
+    screenshot_format = ScenePipeline::kHdrFormat;
+  };
+
+  const bool has_transmission = (pipeline->transmission_group() != nullptr);
+
+  // PBR post-record: snapshot copy (glass), then the screenshot copy *only* when
+  // there is no transmission pass (otherwise the screenshot runs after glass).
+  // Runs after endRenderPass(), before cmd.end(), same command buffer — no extra
+  // vkQueueSubmit.
   pipeline->pbr_group().set_post_record_fn(
-    [this](vk::CommandBuffer cmd, uint32_t /*slot_index*/) {
+    [this, record_screenshot, has_transmission](vk::CommandBuffer cmd, uint32_t /*slot_index*/) {
       // Transmission snapshot: copy the opaque HDR into the per-slot snapshot the
-      // refraction pass samples. Only present for transmissive scenes (gated at
-      // build time); the resource is consumed by a later slice.
-      if (pipeline->snapshot_handle)
+      // refraction pass samples. Only when the transmission group is present to
+      // consume it (the snapshot resource may exist at MSAA with no group).
+      if (pipeline->transmission_group() && pipeline->snapshot_handle)
       {
         auto slot = m_engine->graph->last_offscreen_slot();
         auto& pool = m_engine->graph->resources();
@@ -105,29 +146,31 @@ void Scene::wire_record_callbacks()
           pipeline->pbr_group().extent());
       }
 
-      if (!screenshot_requested || screenshot_in_flight || screenshot_compressing)
-        return;
-      if (!screenshot_readback)
-        return; // buffer not yet allocated — will be ready next frame
-
-      auto extent = pipeline->pbr_group().extent();
-      vk::DeviceSize needed = static_cast<vk::DeviceSize>(extent.width) * extent.height * 8;
-      if (screenshot_readback->size() < needed)
-        return; // buffer too small — will grow next frame
-
-      auto slot = m_engine->graph->last_offscreen_slot();
-      auto hdr_image = m_engine->graph->resources().color_image(pipeline->hdr_handle, slot);
-      record_hdr_screenshot_copy(cmd, hdr_image, extent, screenshot_readback->buffer());
-
-      // Arm the fence — only this copy is serialized, frames keep pipelining
-      screenshot_fence->reset();
-      pipeline->pbr_group().set_next_fence(screenshot_fence->get());
-
-      screenshot_requested = false;
-      screenshot_in_flight = true;
-      screenshot_extent = extent;
-      screenshot_format = ScenePipeline::kHdrFormat;
+      if (!has_transmission)
+        record_screenshot(cmd, pipeline->pbr_group());
     });
+
+  // Transmission group (present only for glass scenes): draws refractive
+  // primitives into the HDR target in its own submission. Its post-record holds
+  // the screenshot copy so a captured glass scene includes the transmission.
+  if (auto* tr = pipeline->transmission_group())
+  {
+    tr->set_record_fn(
+      [this](vk::CommandBuffer cmd, uint32_t frame_index) {
+        // Rebind this slot's snapshot (the opaque scene behind the glass) before
+        // drawing — per-slot, like composite rebinds the HDR each frame.
+        auto slot = m_engine->graph->last_offscreen_slot();
+        pipeline->transmission_group()->write_image_descriptor(
+          0, "snapshotTex", frame_index,
+          m_engine->graph->resources().color_view(*pipeline->snapshot_handle, slot),
+          pipeline->hdr_sampler);
+        transmission_pass.record(cmd);
+      });
+    tr->set_post_record_fn(
+      [this, record_screenshot](vk::CommandBuffer cmd, uint32_t /*slot_index*/) {
+        record_screenshot(cmd, *pipeline->transmission_group());
+      });
+  }
 
   pipeline->composite_group().set_record_fn(
     [this](vk::CommandBuffer cmd, uint32_t frame_index) {
@@ -164,8 +207,24 @@ void Scene::switch_model(const std::string& model_path)
     data.camera.reset_camera(bounds);
   }
 
-  wire_pbr_context();
-  pipeline->rebuild_pbr_descriptors(data);
+  // If the new model crosses the glass boundary (transmission present <-> absent)
+  // the *pass set* changes — structurally rebuild the graph (adds/removes the
+  // transmission pass + snapshot) and re-wire callbacks. Otherwise the structure
+  // is unchanged, so the lighter descriptor-only rebuild suffices.
+  const bool want_transmission =
+    data.has_transmission() &&
+    pipeline->msaa_samples == vk::SampleCountFlagBits::e1;
+  if (want_transmission != pipeline->has_transmission_pass())
+  {
+    pipeline->rebuild_graph(data);   // drains internally
+    wire_pbr_context();
+    wire_record_callbacks();
+  }
+  else
+  {
+    wire_pbr_context();
+    pipeline->rebuild_pbr_descriptors(data);
+  }
 }
 
 void Scene::switch_ibl(const std::string& hdr_path)
