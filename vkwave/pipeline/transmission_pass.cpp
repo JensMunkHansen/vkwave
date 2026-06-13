@@ -24,10 +24,15 @@ PipelineSpec TransmissionPass::pipeline_spec()
   // Glass is double-sided and depth-tested against opaque but does not write
   // depth (single layer). All static state — the record sets no dynamic cull /
   // depth-write, only viewport/scissor.
-  spec.backface_culling = false;
+  // Cull per material (dynamic), mirroring the opaque pass: solid glass is
+  // single-sided (cull back → entry surface only, avoids the back hemisphere
+  // z-fighting through as a chrome center); thin double-sided glass renders both
+  // sides (the shader flips the normal for back faces so Fresnel stays correct).
+  spec.backface_culling = true;
+  spec.dynamic_cull_mode = true;
   spec.depth_test = true;    // depth-test against the stored opaque depth
   spec.depth_write = false;
-  spec.blend = false;        // phase 1: opaque tint; refraction replaces it
+  spec.blend = false;
   return spec;
 }
 
@@ -72,6 +77,13 @@ void TransmissionPass::record(vk::CommandBuffer cmd) const
     auto& prim = ctx->primitives[i];
     if (prim.materialIndex >= ctx->material_count) continue;
     if (ctx->materials[prim.materialIndex].transmissionFactor <= 0.0f) continue;
+
+    auto& mat = ctx->materials[prim.materialIndex];
+
+    // Cull per material: single-sided (solid) glass renders front faces only;
+    // double-sided (thin) glass renders both (the shader flips the back normal).
+    cmd.setCullModeEXT(mat.doubleSided
+      ? vk::CullModeFlagBits::eNone : vk::CullModeFlagBits::eBack);
 
     // Set 2: per-material transmission mask texture (rebound on material change).
     if (prim.materialIndex != bound_material)
