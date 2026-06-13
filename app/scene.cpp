@@ -156,7 +156,14 @@ void Scene::wire_record_callbacks()
   if (auto* tr = pipeline->transmission_group())
   {
     tr->set_record_fn(
-      [this](vk::CommandBuffer cmd, uint32_t /*frame_index*/) {
+      [this](vk::CommandBuffer cmd, uint32_t frame_index) {
+        // Rebind this slot's snapshot (the opaque scene behind the glass) before
+        // drawing — per-slot, like composite rebinds the HDR each frame.
+        auto slot = m_engine->graph->last_offscreen_slot();
+        pipeline->transmission_group()->write_image_descriptor(
+          0, "snapshotTex", frame_index,
+          m_engine->graph->resources().color_view(*pipeline->snapshot_handle, slot),
+          pipeline->hdr_sampler);
         transmission_pass.record(cmd);
       });
     tr->set_post_record_fn(
