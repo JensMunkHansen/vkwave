@@ -341,9 +341,24 @@ void ScenePipeline::upload_material_buffer(SceneData& data)
   pbr_group().write_buffer_descriptor(2, 3, material_buffer->buffer(), bytes);
 
   // The transmission group has the same immutable SSBO at its own set 1, binding
-  // 0 (compact layout). Write it when the glass pass is present.
+  // 0 (compact layout), plus per-material transmission masks at set 2. Write both
+  // when the glass pass is present.
   if (auto* tr = transmission_group())
+  {
     tr->write_buffer_descriptor(1, 0, material_buffer->buffer(), bytes);
+    // (set 1 binding 1 prefilterMap is written in write_ibl_descriptors, so an
+    //  IBL switch refreshes it.)
+
+    // Set 2: per-material transmission mask (white fallback => scalar factor).
+    static const std::unique_ptr<vkwave::Texture> none;
+    const bool use_scene = data.has_multi_material();
+    for (uint32_t m = 0; m < data.material_count(); ++m)
+    {
+      auto& mask = use_scene ? data.gltf_scene.materials[m].transmissionTexture : none;
+      auto& t = mask ? *mask : *data.fallback_white;
+      tr->write_image_descriptor(2, "transmissionMask", m, t.image_view(), t.sampler());
+    }
+  }
 }
 
 void ScenePipeline::write_ibl_descriptors(SceneData& data)
@@ -355,6 +370,12 @@ void ScenePipeline::write_ibl_descriptors(SceneData& data)
     data.ibl->irradiance_view(), data.ibl->irradiance_sampler());
   group.write_image_descriptor(2, "prefilterMap",
     data.ibl->prefiltered_view(), data.ibl->prefiltered_sampler());
+
+  // The transmission group reflects the same prefiltered env at its Fresnel rim
+  // (set 1, binding 1). Refreshed here so an IBL switch updates the glass too.
+  if (auto* tr = transmission_group())
+    tr->write_image_descriptor(1, "prefilterMap",
+      data.ibl->prefiltered_view(), data.ibl->prefiltered_sampler());
 }
 
 void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)
@@ -364,10 +385,21 @@ void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)
   // Save extent before destroying (group resets to zero)
   const auto extent = grp.extent();
 
+  const uint32_t os_depth = m_engine->graph->offscreen_depth();
   grp.destroy_frame_resources();
   grp.set_descriptor_count(1, data.material_count());
   grp.set_descriptor_count(2, 1);
-  grp.create_frame_resources(extent, m_engine->graph->offscreen_depth());
+  grp.create_frame_resources(extent, os_depth);
+
+  // The transmission group also has per-material descriptors (set 2 mask), so it
+  // must be rebuilt when the material set changes (glass -> glass model switch).
+  if (auto* tr = transmission_group())
+  {
+    tr->destroy_frame_resources();
+    tr->set_descriptor_count(1, 1);
+    tr->set_descriptor_count(2, data.material_count());
+    tr->create_frame_resources(extent, os_depth);
+  }
 
   write_pbr_descriptors(data);
 }
@@ -376,7 +408,7 @@ void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)
 // MSAA rebuild
 // ---------------------------------------------------------------------------
 
-vkwave::ExecutionGroup& ScenePipeline::add_transmission_group(SceneData& /*data*/)
+vkwave::ExecutionGroup& ScenePipeline::add_transmission_group(SceneData& data)
 {
   auto& pool = m_engine->graph->resources();
   auto tr_spec = vkwave::TransmissionPass::pipeline_spec();
@@ -386,7 +418,8 @@ vkwave::ExecutionGroup& ScenePipeline::add_transmission_group(SceneData& /*data*
     "transmission", tr_spec, kHdrFormat, kDebug);
   tr_grp.set_color_attachment(pool, hdr_handle);   // draws glass into the HDR
   tr_grp.set_depth_attachment(pool, depth_handle); // depth-test vs opaque depth
-  tr_grp.set_descriptor_count(1, 1);               // singleton material SSBO
+  tr_grp.set_descriptor_count(1, 1);               // set 1: singleton material SSBO
+  tr_grp.set_descriptor_count(2, data.material_count()); // set 2: per-material mask
   return tr_grp;
 }
 

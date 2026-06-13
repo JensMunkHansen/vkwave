@@ -145,6 +145,9 @@ struct SceneMaterial
   // KHR_materials_transmission extension, never from diffuse transmission or
   // volume (those are translucency/SSS — a different effect and a future pass).
   float transmissionFactor{0.0f};
+  // Per-pixel transmission mask (R channel multiplies transmissionFactor) — e.g.
+  // TransmissionTest's pattern where only part of the surface is see-through.
+  std::unique_ptr<Texture> transmissionTexture;
 
   // KHR_materials_diffuse_transmission — light SCATTERS through the surface
   // (translucency: skin, wax, leaves). Captured for a future SSS/translucency

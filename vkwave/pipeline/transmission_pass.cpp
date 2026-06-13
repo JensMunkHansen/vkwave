@@ -66,11 +66,20 @@ void TransmissionPass::record(vk::CommandBuffer cmd) const
   ctx->mesh->bind(cmd);
   const auto stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
 
+  uint32_t bound_material = UINT32_MAX;
   for (uint32_t i = 0; i < ctx->primitive_count; ++i)
   {
     auto& prim = ctx->primitives[i];
     if (prim.materialIndex >= ctx->material_count) continue;
     if (ctx->materials[prim.materialIndex].transmissionFactor <= 0.0f) continue;
+
+    // Set 2: per-material transmission mask texture (rebound on material change).
+    if (prim.materialIndex != bound_material)
+    {
+      auto ds2 = group->descriptor_set(2, prim.materialIndex);
+      cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, 2, 1, &ds2, 0, nullptr);
+      bound_material = prim.materialIndex;
+    }
 
     auto pc = fill_push_constants(*ctx, prim.modelMatrix, prim.materialIndex);
     cmd.pushConstants(layout, stages, 0, sizeof(PbrPushConstants), &pc);
