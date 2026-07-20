@@ -168,17 +168,21 @@ vk::RenderPass make_renderpass(vk::Device device, vk::Format swapchainImageForma
 
 vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
   vk::Format depthFormat, bool debug,
-  vk::SampleCountFlagBits msaaSamples, bool storeDepth)
+  vk::SampleCountFlagBits msaaSamples, bool storeForTransmission)
 {
   const bool msaa = msaaSamples != vk::SampleCountFlagBits::e1;
   std::vector<vk::AttachmentDescription> attachments;
 
-  // Attachment 0: Color (MSAA or single-sample, HDR format)
+  // Attachment 0: Color (MSAA or single-sample, HDR format).
+  // Under MSAA the multisampled contents are normally discarded after the
+  // resolve — except when the transmission pass follows: it LOADs this
+  // attachment to draw glass at full sample count and re-resolve.
   vk::AttachmentDescription colorAttachment{};
   colorAttachment.format = hdrFormat;
   colorAttachment.samples = msaaSamples;
   colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-  colorAttachment.storeOp = msaa ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore;
+  colorAttachment.storeOp = (msaa && !storeForTransmission)
+    ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore;
   colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
   colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
   colorAttachment.initialLayout = vk::ImageLayout::eUndefined;
@@ -193,7 +197,7 @@ vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
   depthAttachment.samples = msaaSamples;
   depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
   // Store depth when a later pass (transmission) will LOAD it; otherwise discard.
-  depthAttachment.storeOp = storeDepth
+  depthAttachment.storeOp = storeForTransmission
     ? vk::AttachmentStoreOp::eStore : vk::AttachmentStoreOp::eDontCare;
   depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eClear;
   depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eStore;
@@ -262,29 +266,40 @@ vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
 }
 
 vk::RenderPass make_transmission_renderpass(vk::Device device, vk::Format hdrFormat,
-  vk::Format depthFormat, bool debug)
+  vk::Format depthFormat, bool debug,
+  vk::SampleCountFlagBits msaaSamples)
 {
+  const bool msaa = msaaSamples != vk::SampleCountFlagBits::e1;
   std::vector<vk::AttachmentDescription> attachments;
 
-  // Attachment 0: HDR color — LOAD the opaque result, draw glass on top, keep it
-  // sampleable for composite (stays ShaderReadOnly on entry and exit; the render
-  // pass transitions it to ColorAttachmentOptimal internally for the draws).
+  // Attachment 0: color — LOAD the opaque result, draw glass on top.
+  // Single-sample: this is the resolved HDR itself; keep it sampleable for
+  // composite (stays ShaderReadOnly on entry and exit; the render pass
+  // transitions it to ColorAttachmentOptimal internally for the draws).
+  // MSAA: this is the scene pass's stored multisampled attachment
+  // (ColorAttachmentOptimal on entry); contents are discarded after the
+  // resolve into HDR (attachment 2).
   vk::AttachmentDescription colorAttachment{};
   colorAttachment.format = hdrFormat;
-  colorAttachment.samples = vk::SampleCountFlagBits::e1;
+  colorAttachment.samples = msaaSamples;
   colorAttachment.loadOp = vk::AttachmentLoadOp::eLoad;
-  colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+  colorAttachment.storeOp = msaa ? vk::AttachmentStoreOp::eDontCare : vk::AttachmentStoreOp::eStore;
   colorAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
   colorAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
-  colorAttachment.initialLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-  colorAttachment.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+  colorAttachment.initialLayout = msaa
+    ? vk::ImageLayout::eColorAttachmentOptimal
+    : vk::ImageLayout::eShaderReadOnlyOptimal;
+  colorAttachment.finalLayout = msaa
+    ? vk::ImageLayout::eColorAttachmentOptimal
+    : vk::ImageLayout::eShaderReadOnlyOptimal;
   attachments.push_back(colorAttachment);
 
   // Attachment 1: shared depth — LOAD the opaque depth so glass is occluded by
   // opaque geometry. Not stored (only used for testing within this pass).
+  // Sample count matches the scene pass (the pool depth is MSAA-matched).
   vk::AttachmentDescription depthAttachment{};
   depthAttachment.format = depthFormat;
-  depthAttachment.samples = vk::SampleCountFlagBits::e1;
+  depthAttachment.samples = msaaSamples;
   depthAttachment.loadOp = vk::AttachmentLoadOp::eLoad;
   depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
   depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
@@ -293,14 +308,36 @@ vk::RenderPass make_transmission_renderpass(vk::Device device, vk::Format hdrFor
   depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
   attachments.push_back(depthAttachment);
 
+  // Attachment 2 (MSAA only): resolve target — the single-sample HDR image.
+  // The whole image is re-resolved (opaque + glass), so the previous resolved
+  // contents can be discarded (initialLayout eUndefined).
+  if (msaa)
+  {
+    vk::AttachmentDescription resolveAttachment{};
+    resolveAttachment.format = hdrFormat;
+    resolveAttachment.samples = vk::SampleCountFlagBits::e1;
+    resolveAttachment.loadOp = vk::AttachmentLoadOp::eDontCare;
+    resolveAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+    resolveAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+    resolveAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+    resolveAttachment.initialLayout = vk::ImageLayout::eUndefined;
+    resolveAttachment.finalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    attachments.push_back(resolveAttachment);
+  }
+
   vk::AttachmentReference colorRef{ 0, vk::ImageLayout::eColorAttachmentOptimal };
   vk::AttachmentReference depthRef{ 1, vk::ImageLayout::eDepthStencilAttachmentOptimal };
+  vk::AttachmentReference resolveRef{ 2, vk::ImageLayout::eColorAttachmentOptimal };
 
   vk::SubpassDescription subpass{};
   subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
   subpass.colorAttachmentCount = 1;
   subpass.pColorAttachments = &colorRef;
   subpass.pDepthStencilAttachment = &depthRef;
+  if (msaa)
+  {
+    subpass.pResolveAttachments = &resolveRef;
+  }
 
   // External dependency: the snapshot copy left HDR ShaderReadOnly via a transfer
   // write, and opaque wrote depth. Wait on both before the load/transition.

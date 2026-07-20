@@ -62,8 +62,16 @@ class ExecutionGroup : public SubmissionGroup
   // Depth buffer (owned, size-dependent — created/destroyed with frame resources)
   std::unique_ptr<DepthStencilAttachment> m_depth_buffer;
 
-  // MSAA color images (transient, only created when m_msaa_samples > e1)
+  // MSAA color images (transient, only created when m_msaa_samples > e1 and no
+  // source group is set)
   std::vector<Image> m_msaa_images;
+
+  // When set, this group's framebuffers reference the source group's per-slot
+  // MSAA color images instead of creating their own (e.g. the transmission pass
+  // LOADs the scene pass's stored multisampled color). Views are resolved at
+  // framebuffer-creation time, so the source's frame resources must be created
+  // first (the graph creates groups in insertion order).
+  const ExecutionGroup* m_msaa_source{ nullptr };
 
   // Ring-buffered managed buffers (auto-created from reflection)
   std::vector<BufferSpec> m_buffer_specs;
@@ -140,6 +148,16 @@ public:
   /// buffer. The pool depth's sample count must match this group's MSAA.
   void set_depth_attachment(const FrameResourcePool& pool,
                             FrameResourcePool::DepthHandle handle);
+
+  /// Share another group's per-slot MSAA color images as this group's
+  /// multisampled attachment instead of creating an own set. The source must
+  /// have the same sample count, format, and extent, and must be created
+  /// earlier in the graph. Call before create_frame_resources().
+  void set_msaa_color_source(const ExecutionGroup* source);
+
+  /// This group's per-slot MSAA color image view (only valid when
+  /// m_msaa_samples > e1 and frame resources exist).
+  [[nodiscard]] vk::ImageView msaa_view(uint32_t slot) const;
 
   /// Create/recreate size-dependent resources (framebuffers, depth buffer, UBOs, descriptors).
   void create_frame_resources(const Swapchain& swapchain, uint32_t count) override;

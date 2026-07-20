@@ -178,6 +178,17 @@ void ExecutionGroup::set_depth_attachment(
   m_depth_handle = handle;
 }
 
+void ExecutionGroup::set_msaa_color_source(const ExecutionGroup* source)
+{
+  m_msaa_source = source;
+}
+
+vk::ImageView ExecutionGroup::msaa_view(uint32_t slot) const
+{
+  assert(slot < m_msaa_images.size() && "msaa_view: slot out of range");
+  return m_msaa_images[slot].image_view();
+}
+
 void ExecutionGroup::create_frame_resources(
   const Swapchain& swapchain, uint32_t count)
 {
@@ -224,8 +235,10 @@ void ExecutionGroup::create_frame_resources_internal(
       m_device, m_depth_format, extent, m_msaa_samples);
   }
 
-  // Create per-slot MSAA color images (transient render targets that resolve into color_views)
-  if (msaa)
+  // Create per-slot MSAA color images (transient render targets that resolve
+  // into color_views) — unless another group's images are shared via
+  // set_msaa_color_source().
+  if (msaa && !m_msaa_source)
   {
     m_msaa_images.clear();
     m_msaa_images.reserve(count);
@@ -253,7 +266,9 @@ void ExecutionGroup::create_frame_resources_internal(
     std::vector<vk::ImageView> attachments;
     if (msaa)
     {
-      attachments.push_back(m_msaa_images[i].image_view()); // attachment 0: MSAA color
+      attachments.push_back(m_msaa_source
+        ? m_msaa_source->msaa_view(i)
+        : m_msaa_images[i].image_view());                    // attachment 0: MSAA color
       if (depth_view)
         attachments.push_back(depth_view);                   // attachment 1: depth
       attachments.push_back(color_views[i]);                 // attachment 2: resolve target

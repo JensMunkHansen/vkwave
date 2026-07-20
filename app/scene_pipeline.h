@@ -75,8 +75,8 @@ struct ScenePipeline
 private:
   Engine* m_engine;
 
-  // Whether the current graph structure includes the transmission pass (glass
-  // present AND single-sample — phase-1 transmission is e1-only).
+  // Whether the current graph structure includes the transmission pass
+  // (the scene has transmissive materials; runs at the scene's sample count).
   bool m_graph_has_transmission{ false };
 
   /// (Re)create the scene render pass + register pool resources + add groups +

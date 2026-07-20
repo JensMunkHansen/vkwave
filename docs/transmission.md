@@ -71,7 +71,8 @@ opaque depth. The opaque HDR is snapshotted per-slot before the glass draws; the
 shader samples it at an IOR/thickness-bent screen coordinate with Beer-Lambert
 absorption + a Fresnel rim. Opt-in is gated at build time and re-evaluated on
 model switch (structural rebuild); the snapshot resource persists for any glass
-scene so an MSAA toggle only adds/removes the *group*.
+scene, and an MSAA toggle only replaces the *group* (rebuilt at the new sample
+count).
 
 Only `KHR_materials_transmission` (specular) drives `transmissionFactor`.
 `KHR_materials_diffuse_transmission` is translucency/SSS — captured separately,
@@ -87,6 +88,17 @@ fallback for materials without a mask. Mask is sampled with UV0 (texture-transfo
 cubemap along `reflect(-V, N)` at the Fresnel rim (sharp, mip 0) instead of flat
 white, so it mirrors its surroundings at grazing angles.
 
+**MSAA + glass — done.** The transmission pass runs at the scene's sample count.
+Under MSAA the scene pass *stores* its multisampled color and depth (instead of
+discarding them after the resolve); the transmission pass LOADs both, draws
+glass into the opaque samples, and re-resolves the whole image into the HDR via
+its own `pResolveAttachments`. The transmission group shares the pbr group's
+per-slot MSAA scratch images (`set_msaa_color_source`) rather than allocating
+its own, and its pipeline/render pass are rebuilt on every MSAA change. The
+snapshot the refraction shader samples is still the resolved single-sample HDR
+(copied after the scene pass's resolve), which is exactly what refraction wants.
+Glass edges are antialiased like opaque geometry.
+
 ### Follow-ups (next iterations)
 
 1. **Roughness blur (phase 2)** — sample the snapshot (and the env reflection) at
@@ -96,15 +108,14 @@ white, so it mirrors its surroundings at grazing angles.
 2. **Mask UV-set / texture-transform** — the transmission mask is sampled with
    UV0 + no transform; honor TEXCOORD_1 / KHR_texture_transform like the PBR
    textures for masks that need it.
-3. **MSAA + glass** — the transmission pass is single-sample only, because it
-   can't share the multisample opaque depth. A depth-resolve (MSAA depth →
-   single-sample) would let glass coexist with MSAA.
-4. **Shared MSAA scratch** — the intra-pass MSAA color/depth scratch is
-   ring-buffered per slot, but it's written-and-resolved within one serialized
-   scene pass and never read across frames, so a single shared copy would cut
-   MSAA memory by the ring depth (today capped at 4 in flight). Confirmed to need
-   no new sync — the existing per-frame fence + render-pass external dependency
-   already order the cross-frame scratch reuse.
+3. **Shared MSAA scratch** — the intra-pass MSAA color/depth scratch is
+   ring-buffered per slot, but it's never read across *frames*, so a single
+   shared copy would cut MSAA memory by the ring depth (today capped at 4 in
+   flight). Caveat since MSAA+glass landed: for glass scenes the scratch *is*
+   read across submissions within a frame (pbr stores it, transmission loads
+   it), so a single shared copy would serialize cross-frame overlap between
+   frame F's transmission and frame F+1's pbr — only viable for glass-free
+   scenes, or with extra sync.
 
 ## Cheaper alternative (rejected for correctness)
 
