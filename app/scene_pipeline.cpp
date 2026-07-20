@@ -33,13 +33,11 @@ ScenePipeline::ScenePipeline(Engine& engine, SceneData& data,
   : msaa_samples(msaa)
   , m_engine(&engine)
 {
-  // Structure-independent render passes (created once, survive rebuilds):
-  //  - composite: swapchain format, no MSAA.
-  //  - transmission: single-sample LOAD pass over HDR + shared depth.
+  // Structure-independent render pass (created once, survives rebuilds):
+  // composite (swapchain format, no MSAA). The transmission render pass is
+  // sample-count-dependent, so it is (re)created in add_transmission_group().
   composite_renderpass = vkwave::make_composite_renderpass(
     engine.device->device(), engine.swapchain->image_format(), kDebug);
-  transmission_renderpass = vkwave::make_transmission_renderpass(
-    engine.device->device(), kHdrFormat, kDepthFormat, kDebug);
 
   // Create sampler (persistent across resize / rebuild)
   {
@@ -77,12 +75,10 @@ void ScenePipeline::build_scene_graph(SceneData& data)
   auto& pool = engine.graph->resources();
 
   const bool has_glass = data.has_transmission();
-  // The transmission *pass* is e1-only: a single-sample pass cannot share an MSAA
-  // (multisample) depth buffer (subpass sample counts must match; depth resolve
-  // is a later task). The *snapshot* pool resource is registered for any glass
-  // scene regardless of MSAA, so toggling MSAA only adds/removes the group — not
-  // pool resources (keeps the incremental MSAA path off the structural rebuild).
-  m_graph_has_transmission = has_glass && msaa_samples == vk::SampleCountFlagBits::e1;
+  // The transmission pass runs at the scene's sample count: under MSAA it LOADs
+  // the scene pass's stored multisampled color + depth, draws glass, and
+  // re-resolves into the HDR (see make_transmission_renderpass).
+  m_graph_has_transmission = has_glass;
 
   // (Re)create the scene render pass at the current MSAA. The transmission group
   // LOADs this depth, so the scene pass must STORE it (only when the group exists).
@@ -411,13 +407,27 @@ void ScenePipeline::rebuild_pbr_descriptors(SceneData& data)
 vkwave::ExecutionGroup& ScenePipeline::add_transmission_group(SceneData& data)
 {
   auto& pool = m_engine->graph->resources();
+  auto dev = m_engine->device->device();
+
+  // The render pass is sample-count-dependent — recreate at the current MSAA.
+  // Callers guarantee no live group references the old pass (initial build, or
+  // the group was removed + graph drained before re-adding).
+  if (transmission_renderpass)
+    dev.destroyRenderPass(transmission_renderpass);
+  transmission_renderpass = vkwave::make_transmission_renderpass(
+    dev, kHdrFormat, kDepthFormat, kDebug, msaa_samples);
+
   auto tr_spec = vkwave::TransmissionPass::pipeline_spec();
   tr_spec.existing_renderpass = transmission_renderpass;
-  tr_spec.msaa_samples = vk::SampleCountFlagBits::e1;
+  tr_spec.msaa_samples = msaa_samples;
   auto& tr_grp = m_engine->graph->add_offscreen_group(
     "transmission", tr_spec, kHdrFormat, kDebug);
-  tr_grp.set_color_attachment(pool, hdr_handle);   // draws glass into the HDR
+  tr_grp.set_color_attachment(pool, hdr_handle);   // resolve target (MSAA) / direct (e1)
   tr_grp.set_depth_attachment(pool, depth_handle); // depth-test vs opaque depth
+  // Under MSAA, LOAD the pbr group's stored multisampled color instead of
+  // creating an own scratch set (glass draws into the opaque samples).
+  if (msaa_samples != vk::SampleCountFlagBits::e1)
+    tr_grp.set_msaa_color_source(&pbr_group());
   tr_grp.set_descriptor_count(1, 1);               // set 1: singleton material SSBO
   tr_grp.set_descriptor_count(2, data.material_count()); // set 2: per-material mask
   return tr_grp;
@@ -429,17 +439,17 @@ void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
   // INCREMENTAL path (must NOT route through the structural rebuild_graph — that
   // frees+reallocates every resource and 2x-peaks GPU memory, OOMing at
   // 8x/fullscreen). Replace only the pbr group + depth; keep HDR/composite/
-  // semaphores. The transmission group is e1-only, so add/remove just that group.
+  // semaphores. The transmission group's pipeline + render pass are baked at a
+  // sample count, so it is dropped here and re-added at the new count in step 3.
   msaa_samples = new_samples;
   auto& graph = *m_engine->graph;
   auto& pool = graph.resources();
   const uint32_t os_depth = graph.offscreen_depth();
-  const bool want_group =
-    data.has_transmission() && msaa_samples == vk::SampleCountFlagBits::e1;
+  const bool want_group = data.has_transmission();
 
-  // 1. Drop the transmission group BEFORE the depth becomes multisample (it is
-  //    single-sample and shares that depth).
-  if (m_graph_has_transmission && !want_group)
+  // 1. Drop the transmission group BEFORE the depth changes sample count (it
+  //    shares that depth, and under MSAA also the pbr group's color scratch).
+  if (m_graph_has_transmission)
   {
     graph.remove_last_offscreen_group();
     m_graph_has_transmission = false;
@@ -472,8 +482,9 @@ void ScenePipeline::rebuild_for_msaa(vk::SampleCountFlagBits new_samples,
   new_pbr.set_descriptor_count(2, 1);
   new_pbr.create_frame_resources(extent, os_depth);
 
-  // 3. Re-add the transmission group now that depth is single-sample again.
-  if (want_group && !m_graph_has_transmission)
+  // 3. Re-add the transmission group at the new sample count (it references the
+  //    new pbr group's MSAA scratch + the re-allocated depth).
+  if (want_group)
   {
     auto& tr_grp = add_transmission_group(data);
     tr_grp.create_frame_resources(extent, os_depth);

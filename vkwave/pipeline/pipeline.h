@@ -87,23 +87,28 @@ vk::RenderPass make_renderpass(vk::Device device, vk::Format swapchainImageForma
 
 /// Scene render pass: renders to an HDR color target (with optional MSAA + resolve).
 /// The resolved HDR image ends in eShaderReadOnlyOptimal for sampling by the composite pass.
-/// @param storeDepth keep the depth buffer after the pass (storeOp=eStore) so a
-///   later pass (transmission) can LOAD it; default discards it (eDontCare).
+/// @param storeForTransmission keep the attachments a following transmission pass
+///   LOADs: depth (storeOp=eStore), and under MSAA also the multisampled color
+///   (so glass can be drawn into it and re-resolved). Default discards both.
 vk::RenderPass make_scene_renderpass(vk::Device device, vk::Format hdrFormat,
   vk::Format depthFormat, bool debug,
   vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1,
-  bool storeDepth = false);
+  bool storeForTransmission = false);
 
 /// Composite render pass: single swapchain color attachment, no depth.
 vk::RenderPass make_composite_renderpass(vk::Device device, vk::Format swapchainFormat, bool debug);
 
-/// Transmission (refraction) render pass: LOADs the opaque HDR color + shared
-/// depth and draws glass on top, then leaves HDR in eShaderReadOnlyOptimal for
-/// the composite pass. Single-sample (phase 1 renders directly into the resolved
-/// HDR; MSAA interaction is a follow-up). Color: load=LOAD, initial+final
+/// Transmission (refraction) render pass: LOADs the opaque color + shared depth
+/// and draws glass on top, then leaves the HDR image in eShaderReadOnlyOptimal
+/// for the composite pass.
+/// Single-sample: color = resolved HDR, load=LOAD, initial+final
 /// eShaderReadOnlyOptimal. Depth: load=LOAD (test against opaque), no clear.
+/// MSAA: color = the scene pass's stored multisampled attachment (load=LOAD),
+/// depth = shared multisampled depth (load=LOAD), plus a resolve attachment
+/// into the single-sample HDR (opaque + glass re-resolved together).
 vk::RenderPass make_transmission_renderpass(vk::Device device, vk::Format hdrFormat,
-  vk::Format depthFormat, bool debug);
+  vk::Format depthFormat, bool debug,
+  vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1);
 
 GraphicsPipelineOutBundle create_graphics_pipeline(
   GraphicsPipelineInBundle& specification, bool debug);

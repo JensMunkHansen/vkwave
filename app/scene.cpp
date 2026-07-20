@@ -84,7 +84,7 @@ void Scene::wire_pbr_context()
 
   // When the transmission pass is present it owns transmissive prims, so the
   // opaque/blend passes must skip them (else they write depth + pollute the
-  // snapshot). Without the pass (e.g. MSAA on), glass falls back to opaque.
+  // snapshot). Without the pass, glass falls back to opaque.
   pbr_ctx.defer_transmissive = (transmission_pass.group != nullptr);
 }
 
@@ -211,9 +211,7 @@ void Scene::switch_model(const std::string& model_path)
   // the *pass set* changes — structurally rebuild the graph (adds/removes the
   // transmission pass + snapshot) and re-wire callbacks. Otherwise the structure
   // is unchanged, so the lighter descriptor-only rebuild suffices.
-  const bool want_transmission =
-    data.has_transmission() &&
-    pipeline->msaa_samples == vk::SampleCountFlagBits::e1;
+  const bool want_transmission = data.has_transmission();
   if (want_transmission != pipeline->has_transmission_pass())
   {
     pipeline->rebuild_graph(data);   // drains internally
