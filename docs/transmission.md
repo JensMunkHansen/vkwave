@@ -117,6 +117,13 @@ Glass edges are antialiased like opaque geometry.
    frame F's transmission and frame F+1's pbr — only viable for glass-free
    scenes, or with extra sync.
 
+   See **F5** in `rendering-foundations.md` for the general form of this: the
+   ring depth conflates CPU run-ahead with image residency, and the "extra sync"
+   this item needs is exactly F5's GPU-side timeline wait against the frame that
+   last used the shared copy. The "capped at 4 in flight" mentioned above is the
+   cap F5 removes — it was a VRAM fix that charged every configuration, including
+   1x, for the 8x/4k worst case, and it cost measurable frame rate.
+
 ## Cheaper alternative (rejected for correctness)
 
 Transmissive materials could be treated as plain alpha-blend (constant tint,

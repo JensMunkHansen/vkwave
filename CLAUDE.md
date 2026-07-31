@@ -272,6 +272,28 @@ cmake --preset linux-gcc
 cmake --build build/linux-gcc --config Debug
 ```
 
+### Asset fetching is not reproducible (follow-up)
+
+`FetchAssets.cmake` downloads models and HDRs at configure time into `data/`
+(gitignored). Two gaps worth closing, since every rendering measurement depends
+on the assets being what you think they are:
+
+- **URLs track `main`, unpinned** (`FetchAssets.cmake:17-18`). Khronos re-exports
+  sample assets — resolutions and extension usage have changed historically — so
+  a fresh checkout can pull a different DamagedHelmet with different texture
+  dimensions, silently invalidating texture/mip benchmarks with nothing in the
+  tree having changed. `raw.githubusercontent.com` accepts a commit SHA where the
+  branch name goes.
+- **A failed download can be cached permanently as a corrupt file.**
+  `_download_asset` short-circuits on `EXISTS` and there is no hash check. CMake's
+  `file(DOWNLOAD)` reports `STATUS` 0 for HTTP 4xx — the transfer succeeded, the
+  server just sent an error body — so a 404 writes `404: Not Found` into
+  `DamagedHelmet.glb`, passes the status check, is never removed, and is skipped
+  by every later configure. Surfaces as a confusing loader failure.
+
+`EXPECTED_HASH` on `file(DOWNLOAD)` closes both: CMake removes the file itself on
+mismatch, and a pinned hash implies a pinned revision.
+
 ## Project Structure
 
 ```

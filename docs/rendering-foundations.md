@@ -174,6 +174,75 @@ transmission) and lets IBL's bespoke mip/transition code — and its
 `begin/end_single_time_commands` helpers — migrate onto the shared
 infrastructure (`commands.h::submit_one_shot`).
 
+**Follow-up — block-compressed material textures.** Mips fixed the *locality* of
+texture reads; they did not shrink the reads themselves. `Texture::upload_pixels`
+uploads RGBA8 at 4 bytes/texel, so DamagedHelmet's five 2048² images occupy
+~80 MiB in VRAM (~107 MiB with the chain) even though they ship as ~3.2 MB of
+JPEG — JPEG is a storage codec and is fully decoded before upload. BC7 (colour)
+and BC5 (normals) are GPU-native fixed-rate formats at 1 byte/texel, decompressed
+per-texel in the texture unit, so the same set becomes ~20 MiB (~27 MiB mipped) —
+a flat 4:1 on both footprint and bytes-per-cache-line-fill, at every LOD. The
+glTF-native route is KTX2 + `KHR_texture_basisu`; transcoding once at configure
+time next to the fetched `.glb` may be simpler than adding a loader dependency.
+Caveats: 4:1 is a bandwidth/footprint ratio, not a promised frame-time win (the
+mipped path is already largely cache-resident); and compressing
+already-decoded JPEG compounds generation loss, so the BC7/BC5 split by texture
+role matters.
+
+---
+
+## F5 — Split run-ahead depth from residency depth
+
+`RenderGraph::offscreen_depth()` (`render_graph.cpp:91`) returns one number that
+is used for two unrelated purposes, and they want opposite values:
+
+- **Run-ahead depth** — how many frames the CPU may record before stalling.
+  `render_graph.cpp:241` computes `slot = m_cpu_frame % os_depth`, and
+  `submission_group.cpp:118` host-waits on that slot's timeline value. Backed by
+  per-slot command buffers, reflected UBOs/SSBOs, and descriptor sets: a few MB
+  at any depth. This is what produces the frame rate, and it wants to be deep.
+- **Residency depth** — how many copies of the large per-slot images exist. At
+  4k: HDR ~66 MB/slot, depth ~33 MB (1x) to ~265 MB (8x), MSAA colour scratch
+  ~531 MB (8x). Roughly 100 MB/slot at 1x versus ~860 MB/slot at 8x. This is what
+  OOMs, and it wants to be shallow *only* at high sample counts.
+
+Conflating them forced a flat `kDefaultMaxInFlight = 4` cap, which fixed the
+8x/4k OOM by charging every other configuration for it — including 1x, where a
+slot costs ~100 MB and there is nothing to protect against. The resulting
+frame-rate regression was measured and is scene- and MSAA-independent.
+
+**Design.** Ring the cheap CPU-facing resources at `N` (swapchain count) and the
+large images at `K` (2–3). Frames `i` and `i+K` then share an image, which needs
+an explicit edge: a **GPU-side** timeline wait in frame `i`'s submit against the
+value signalled by frame `i-K`. It must not be a host wait — that would
+reintroduce the stall this exists to remove. The submit path already assembles
+wait lists for the DAG, so it is one more entry. Sync validation (Debug) is the
+backstop if the edge is wrong.
+
+Descriptors mostly fall out for free: `scene.cpp:161` and `scene.cpp:177` already
+rewrite image descriptors every frame from `last_offscreen_slot()`, so they would
+resolve against the K-ring instead. Each of the N descriptor sets is distinct, so
+there is no write-while-in-use hazard.
+
+**Constraint.** Any depth that varies must be *sticky*. `offscreen_depth()` is
+read both at build (`render_graph.cpp:106`) and in `rebuild_for_msaa`
+(`scene_pipeline.cpp:447`), and the incremental MSAA path deliberately keeps the
+HDR/composite/semaphores from the original build. A sample-count-dependent depth
+would produce a pbr group ringed at one value against an HDR ringed at another —
+out-of-range slot indexing. Compute once for the worst reachable sample count,
+then cache.
+
+**Open question, and the cheap way to settle it.** It is not yet established
+whether the frame rate comes from CPU run-ahead or from GPU co-residency. With
+one graphics queue, genuine co-execution is the tail of frame `i` overlapping the
+head of `i+1` — realistically 2–3 frames, not 8 — which would mean `K` can be
+clamped freely. Splitting the two knobs makes this measurable: hold `N` at the
+swapchain count, sweep `K` from 2 upward at 1x, and see whether the rate moves.
+If it is flat, clamp `K` at high MSAA and keep `N` deep. If it drops, the
+opposite, and now for a known reason. Note that `K` does bound how many scene
+passes can execute simultaneously — that cost is real, it is just paid only in
+the configurations that are already bandwidth-bound.
+
 ---
 
 ## Minor follow-ups
@@ -184,6 +253,21 @@ infrastructure (`commands.h::submit_one_shot`).
   does, via the `Image` constructor). With lazily-allocated memory this avoids
   backing store; a minor bandwidth/memory win, mostly on tile-based GPUs.
   `DepthStencilAttachment` currently always uses `eDepthStencilAttachment` only.
+
+- **`reset_camera` does not reset `m_view_angle`.** It restores position, focal
+  point, and clipping range, and it *derives* the framing distance from the
+  current FOV (`camera.cpp:259`: `distance = radius / sin(view_angle/2)`), but
+  never resets the FOV itself. Since plain scroll is `zoom()` (FOV) and
+  `reset_camera` runs on every model load (`main.cpp:173`, `scene.cpp:207`), a
+  zoom-then-switch-model cycle silently spends zoom range: the model is re-framed
+  to look identically sized while the remaining travel to the 1° clamp shrinks
+  (60° frames at 2×radius, 10° at 11.5×, 1° at 114.6×). Switch back and forth a
+  few times and you can no longer zoom close. The orthographic branch already
+  resets its own zoom state (`camera.cpp:254` writes `m_parallel_scale = radius`)
+  — the perspective branch only reads. Fixing it makes the two branches
+  consistent; set the FOV *before* line 259 reads it, and share the `60.0f`
+  default with the member initialiser at `camera.h:167`. Nothing else owns the
+  value: `set_view_angle` has no callers and there is no CLI/TOML/GUI control.
 
 - **Asset loading is synchronous and blocks the main thread.** Each texture
   uploads via its own `submit_one_shot` → `waitIdle` round-trip (now plus a
